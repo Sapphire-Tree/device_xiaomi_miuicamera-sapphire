@@ -1,0 +1,4078 @@
+From 0cc053eb4040f8b1aaf648b5b5d23213ea6ebdda Mon Sep 17 00:00:00 2001
+From: Angelpro09_Dev <aloplop090708@gmail.com>
+Date: Mon, 20 Jul 2026 12:15:50 +0000
+Subject: [PATCH] Fix Nocturno save, hide duplicate Video corto entries, fix
+ color filters via real Xiaomi LUT data
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- RawJpegFix: read the active color-lookup filter on demand from
+  com.android.camera.effect.n (getEffectForSaving + getLookupTableName)
+  instead of hooking Lm2/b construction, which never fires since filters
+  are pre-cached rather than constructed per-selection. Applies the real
+  Xiaomi LUT PNG (res/raw/normal_*.png) via a standard Hald-CLUT bilinear
+  lookup, matching what the live preview shader does.
+- RawJpegFix.finishAsync: fall back to publishing a brand-new MediaStore
+  entry when no pending placeholder row is found after retries (fixes
+  Nocturno-mode captures never appearing in the gallery).
+- k3/c.smali, zf/v.smali: force support() to false for both registrations
+  of the duplicate Vídeo corto module (moduleId 0xa1 and 0xb7), which is
+  broken even in stock MIUI.
+---
+ smali/k3/c.smali                              |   12 +-
+ smali_classes4/zf/v.smali                     |   36 +-
+ .../lunaris/camerafix/FilterState.smali       |   75 +
+ ...wJpegFix$$ExternalSyntheticBackport0.smali |    6 +-
+ ...RawJpegFix$$ExternalSyntheticLambda1.smali |    2 -
+ ...RawJpegFix$$ExternalSyntheticLambda2.smali |    2 -
+ .../camerafix/RawJpegFix$CamInfo.smali        |    1 +
+ .../lunaris/camerafix/RawJpegFix.smali        | 2899 ++++++++++++-----
+ 8 files changed, 2244 insertions(+), 789 deletions(-)
+ create mode 100644 smali_classes8/lunaris/camerafix/FilterState.smali
+
+diff --git a/smali/k3/c.smali b/smali/k3/c.smali
+index 88117353..35d7d915 100644
+--- a/smali/k3/c.smali
++++ b/smali/k3/c.smali
+@@ -109,15 +109,9 @@
+ .end method
+ 
+ .method public support()Z
+-    .locals 0
+-
+-    invoke-static {}, Lub/c;->r2()Lub/c;
+-
+-    move-result-object p0
+-
+-    invoke-virtual {p0}, Lub/c;->x6()Z
++    .locals 1
+ 
+-    move-result p0
++    const/4 v0, 0x0
+ 
+-    return p0
++    return v0
+ .end method
+diff --git a/smali_classes4/zf/v.smali b/smali_classes4/zf/v.smali
+index 6068df9f..1cefd80b 100644
+--- a/smali_classes4/zf/v.smali
++++ b/smali_classes4/zf/v.smali
+@@ -109,39 +109,9 @@
+ .end method
+ 
+ .method public support()Z
+-    .locals 0
+-
+-    invoke-static {}, Lub/c;->r2()Lub/c;
+-
+-    move-result-object p0
+-
+-    invoke-virtual {p0}, Lub/c;->W6()Z
+-
+-    move-result p0
+-
+-    if-nez p0, :cond_1
+-
+-    invoke-static {}, Lub/c;->r2()Lub/c;
+-
+-    move-result-object p0
+-
+-    invoke-virtual {p0}, Lub/c;->X6()Z
+-
+-    move-result p0
+-
+-    if-eqz p0, :cond_0
+-
+-    goto :goto_0
+-
+-    :cond_0
+-    const/4 p0, 0x0
+-
+-    goto :goto_1
++    .locals 1
+ 
+-    :cond_1
+-    :goto_0
+-    const/4 p0, 0x1
++    const/4 v0, 0x0
+ 
+-    :goto_1
+-    return p0
++    return v0
+ .end method
+diff --git a/smali_classes8/lunaris/camerafix/FilterState.smali b/smali_classes8/lunaris/camerafix/FilterState.smali
+new file mode 100644
+index 00000000..c3d722f2
+--- /dev/null
++++ b/smali_classes8/lunaris/camerafix/FilterState.smali
+@@ -0,0 +1,75 @@
++.class public Llunaris/camerafix/FilterState;
++.super Ljava/lang/Object;
++.source "FilterState.java"
++
++
++# static fields
++.field private static final TAG:Ljava/lang/String; = "RawJpegFix"
++
++.field public static volatile currentLutName:Ljava/lang/String;
++
++
++# direct methods
++.method static constructor <clinit>()V
++    .locals 1
++
++    .line 7
++    const/4 v0, 0x0
++
++    sput-object v0, Llunaris/camerafix/FilterState;->currentLutName:Ljava/lang/String;
++
++    return-void
++.end method
++
++.method public constructor <init>()V
++    .locals 0
++
++    .line 5
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++
++    return-void
++.end method
++
++.method public static setCurrentLut(Ljava/lang/String;)V
++    .locals 3
++
++    .line 11
++    :try_start_0
++    sput-object p0, Llunaris/camerafix/FilterState;->currentLutName:Ljava/lang/String;
++
++    .line 12
++    const-string v0, "RawJpegFix"
++
++    new-instance v1, Ljava/lang/StringBuilder;
++
++    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v2, "FilterState: active color-lookup filter = "
++
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p0
++
++    invoke-virtual {p0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p0
++
++    invoke-static {v0, p0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++
++    .line 14
++    goto :goto_0
++
++    .line 13
++    :catchall_0
++    move-exception p0
++
++    .line 15
++    :goto_0
++    return-void
++.end method
+diff --git a/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0.smali b/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0.smali
+index e136adad..685d67b3 100644
+--- a/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0.smali
++++ b/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0.smali
+@@ -7,7 +7,6 @@
+ .method public static synthetic m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
+     .locals 6
+ 
+-    .line 0
+     :try_start_0
+     const-class v0, Ljava/lang/Throwable;
+ 
+@@ -35,6 +34,11 @@
+     :try_end_0
+     .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
+ 
++    goto :goto_0
++
+     :catch_0
++    move-exception p0
++
++    :goto_0
+     return-void
+ .end method
+diff --git a/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1.smali b/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1.smali
+index 7cd935a6..454bda5a 100644
+--- a/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1.smali
++++ b/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1.smali
+@@ -10,7 +10,6 @@
+ .method public synthetic constructor <init>()V
+     .locals 0
+ 
+-    .line 0
+     invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+ 
+     return-void
+@@ -21,7 +20,6 @@
+ .method public final run()V
+     .locals 0
+ 
+-    .line 0
+     invoke-static {}, Llunaris/camerafix/RawJpegFix;->lambda$preload$0()V
+ 
+     return-void
+diff --git a/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2.smali b/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2.smali
+index 6afb733f..913e8f94 100644
+--- a/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2.smali
++++ b/smali_classes8/lunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2.smali
+@@ -16,7 +16,6 @@
+ .method public synthetic constructor <init>(Landroid/content/Context;Landroid/media/Image;)V
+     .locals 0
+ 
+-    .line 0
+     invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+ 
+     iput-object p1, p0, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2;->f$0:Landroid/content/Context;
+@@ -31,7 +30,6 @@
+ .method public final run()V
+     .locals 2
+ 
+-    .line 0
+     iget-object v0, p0, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2;->f$0:Landroid/content/Context;
+ 
+     iget-object v1, p0, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2;->f$1:Landroid/media/Image;
+diff --git a/smali_classes8/lunaris/camerafix/RawJpegFix$CamInfo.smali b/smali_classes8/lunaris/camerafix/RawJpegFix$CamInfo.smali
+index 5aa37219..01cf81dd 100644
+--- a/smali_classes8/lunaris/camerafix/RawJpegFix$CamInfo.smali
++++ b/smali_classes8/lunaris/camerafix/RawJpegFix$CamInfo.smali
+@@ -33,5 +33,6 @@
+     .line 108
+     iput-boolean p2, p0, Llunaris/camerafix/RawJpegFix$CamInfo;->frontFacing:Z
+ 
++    .line 109
+     return-void
+ .end method
+diff --git a/smali_classes8/lunaris/camerafix/RawJpegFix.smali b/smali_classes8/lunaris/camerafix/RawJpegFix.smali
+index 2fc8835d..912cadd8 100644
+--- a/smali_classes8/lunaris/camerafix/RawJpegFix.smali
++++ b/smali_classes8/lunaris/camerafix/RawJpegFix.smali
+@@ -38,9 +38,9 @@
+ 
+     sput-object v0, Llunaris/camerafix/RawJpegFix;->lastAccepted:Ljava/util/concurrent/atomic/AtomicLong;
+ 
++    .line 33
+     const/4 v0, 0x0
+ 
+-    .line 33
+     sput-boolean v0, Llunaris/camerafix/RawJpegFix;->preloaded:Z
+ 
+     return-void
+@@ -55,1180 +55,2510 @@
+     return-void
+ .end method
+ 
+-.method private static clearProcessingEntry(Landroid/content/Context;J)V
+-    .locals 4
++.method private static applyColorLookup(Landroid/graphics/Bitmap;Landroid/graphics/Bitmap;)Landroid/graphics/Bitmap;
++    .locals 20
+ 
+-    .line 311
+-    const-string v0, "RawJpegFix"
++    .line 229
++    invoke-virtual/range {p0 .. p0}, Landroid/graphics/Bitmap;->getWidth()I
+ 
+-    .line 0
+-    const-string v1, "clearProcessingEntry: id="
++    move-result v8
+ 
+-    const-string v2, "content://com.xiaomi.camera.parallelservice.provider.SpecialTypesProvider/processing/"
++    .line 230
++    invoke-virtual/range {p0 .. p0}, Landroid/graphics/Bitmap;->getHeight()I
+ 
+-    .line 311
+-    :try_start_0
+-    invoke-virtual {p0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
++    move-result v9
+ 
+-    move-result-object p0
++    .line 231
++    invoke-virtual/range {p1 .. p1}, Landroid/graphics/Bitmap;->getWidth()I
+ 
+-    .line 312
+-    new-instance v3, Ljava/lang/StringBuilder;
++    move-result v10
+ 
+-    invoke-direct {v3, v2}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++    .line 232
++    div-int/lit8 v11, v10, 0x8
+ 
+-    invoke-virtual {v3, p1, p2}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
++    .line 233
++    add-int/lit8 v0, v11, -0x1
+ 
+-    invoke-virtual {v3}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    int-to-float v12, v0
+ 
+-    move-result-object v2
++    .line 235
++    mul-int v0, v10, v10
+ 
+-    invoke-static {v2}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
++    new-array v13, v0, [I
+ 
+-    move-result-object v2
++    .line 236
++    const/4 v2, 0x0
+ 
+-    const/4 v3, 0x0
++    const/4 v4, 0x0
+ 
+-    .line 313
+-    invoke-virtual {p0, v2, v3, v3}, Landroid/content/ContentResolver;->delete(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I
++    const/4 v5, 0x0
+ 
+-    move-result p0
++    move-object/from16 v0, p1
+ 
+-    .line 314
+-    new-instance v2, Ljava/lang/StringBuilder;
++    move-object v1, v13
+ 
+-    invoke-direct {v2, v1}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++    move v3, v10
+ 
+-    invoke-virtual {v2, p1, p2}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
++    move v6, v10
+ 
+-    const-string p1, " rows="
++    move v7, v10
+ 
+-    invoke-virtual {v2, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    invoke-virtual/range {v0 .. v7}, Landroid/graphics/Bitmap;->getPixels([IIIIIII)V
+ 
+-    invoke-virtual {v2, p0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    .line 238
++    mul-int v14, v8, v9
+ 
+-    invoke-virtual {v2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    new-array v15, v14, [I
+ 
+-    move-result-object p0
++    .line 239
++    move-object/from16 v0, p0
+ 
+-    invoke-static {v0, p0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+-    :try_end_0
+-    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++    move-object v1, v15
+ 
+-    goto :goto_0
++    move v3, v8
+ 
+-    :catchall_0
+-    move-exception p0
++    move v6, v8
+ 
+-    .line 316
+-    const-string p1, "clearProcessingEntry failed"
++    move v7, v9
+ 
+-    invoke-static {v0, p1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++    invoke-virtual/range {v0 .. v7}, Landroid/graphics/Bitmap;->getPixels([IIIIIII)V
++
++    .line 241
++    const/4 v0, 0x0
+ 
+     :goto_0
+-    return-void
+-.end method
++    if-ge v0, v14, :cond_0
+ 
+-.method private static encodeAndFinishAsync(Landroid/content/Context;Landroid/media/Image;)V
+-    .locals 12
++    .line 242
++    aget v1, v15, v0
+ 
+-    .line 113
+-    const-string v0, "RawJpegFix"
++    .line 243
++    shr-int/lit8 v2, v1, 0x10
+ 
+-    const/16 v1, 0xa
++    and-int/lit16 v2, v2, 0xff
+ 
+-    invoke-static {v1}, Landroid/os/Process;->setThreadPriority(I)V
++    .line 244
++    shr-int/lit8 v3, v1, 0x8
+ 
+-    .line 118
+-    :try_start_0
+-    invoke-virtual {p1}, Landroid/media/Image;->getWidth()I
++    and-int/lit16 v3, v3, 0xff
+ 
+-    move-result v1
++    .line 245
++    and-int/lit16 v4, v1, 0xff
+ 
+-    .line 119
+-    invoke-virtual {p1}, Landroid/media/Image;->getHeight()I
++    .line 247
++    int-to-float v4, v4
+ 
+-    move-result v2
++    mul-float v4, v4, v12
+ 
+-    .line 120
+-    invoke-static {p1}, Llunaris/camerafix/RawJpegFix;->yuv420ToNv21(Landroid/media/Image;)[B
++    const/high16 v5, 0x437f0000    # 255.0f
+ 
+-    move-result-object p1
++    div-float/2addr v4, v5
+ 
+-    .line 122
+-    invoke-static {p0, v1, v2}, Llunaris/camerafix/RawJpegFix;->resolveCamInfo(Landroid/content/Context;II)Llunaris/camerafix/RawJpegFix$CamInfo;
++    .line 248
++    const/high16 v6, 0x41000000    # 8.0f
+ 
+-    move-result-object v3
++    div-float v6, v4, v6
+ 
+-    const/4 v4, 0x0
++    float-to-double v6, v6
+ 
+-    move-object v6, p1
++    move/from16 v16, v8
+ 
+-    const/4 p1, 0x0
++    move/from16 v17, v9
+ 
+-    .line 125
+-    :goto_0
+-    iget v5, v3, Llunaris/camerafix/RawJpegFix$CamInfo;->rotationDegrees:I
++    invoke-static {v6, v7}, Ljava/lang/Math;->floor(D)D
+ 
+-    div-int/lit8 v5, v5, 0x5a
++    move-result-wide v8
+ 
+-    if-ge p1, v5, :cond_0
++    double-to-int v8, v8
+ 
+-    .line 126
+-    invoke-static {v6, v1, v2}, Llunaris/camerafix/RawJpegFix;->rotateNv21_90CW([BII)[B
++    .line 249
++    move-wide/from16 v18, v6
+ 
+-    move-result-object v6
++    float-to-double v5, v4
+ 
+-    add-int/lit8 p1, p1, 0x1
++    move/from16 p1, v14
+ 
+-    move v11, v2
++    move-object v7, v15
+ 
+-    move v2, v1
++    invoke-static {v5, v6}, Ljava/lang/Math;->floor(D)D
+ 
+-    move v1, v11
++    move-result-wide v14
+ 
+-    goto :goto_0
++    double-to-int v9, v14
+ 
+-    .line 132
+-    :cond_0
+-    new-instance p1, Landroid/graphics/YuvImage;
++    mul-int/lit8 v14, v8, 0x8
+ 
+-    const/16 v7, 0x11
++    sub-int/2addr v9, v14
+ 
+-    const/4 v10, 0x0
++    .line 250
++    invoke-static/range {v18 .. v19}, Ljava/lang/Math;->ceil(D)D
+ 
+-    move-object v5, p1
++    move-result-wide v14
+ 
+-    move v8, v1
++    double-to-int v14, v14
+ 
+-    move v9, v2
++    .line 251
++    move v15, v0
+ 
+-    invoke-direct/range {v5 .. v10}, Landroid/graphics/YuvImage;-><init>([BIII[I)V
++    move/from16 v18, v1
+ 
+-    .line 133
+-    new-instance v5, Ljava/io/ByteArrayOutputStream;
++    invoke-static {v5, v6}, Ljava/lang/Math;->ceil(D)D
+ 
+-    invoke-direct {v5}, Ljava/io/ByteArrayOutputStream;-><init>()V
++    move-result-wide v0
+ 
+-    .line 134
+-    new-instance v6, Landroid/graphics/Rect;
++    double-to-int v0, v0
+ 
+-    invoke-direct {v6, v4, v4, v1, v2}, Landroid/graphics/Rect;-><init>(IIII)V
++    mul-int/lit8 v1, v14, 0x8
+ 
+-    const/16 v7, 0x5f
++    sub-int/2addr v0, v1
+ 
+-    invoke-virtual {p1, v6, v7, v5}, Landroid/graphics/YuvImage;->compressToJpeg(Landroid/graphics/Rect;ILjava/io/OutputStream;)Z
++    .line 253
++    int-to-float v1, v2
+ 
+-    .line 135
+-    invoke-virtual {v5}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
++    const/high16 v2, 0x437f0000    # 255.0f
+ 
+-    move-result-object p1
++    div-float/2addr v1, v2
+ 
+-    .line 137
+-    iget-boolean v3, v3, Llunaris/camerafix/RawJpegFix$CamInfo;->frontFacing:Z
++    .line 254
++    int-to-float v3, v3
+ 
+-    if-eqz v3, :cond_2
++    div-float/2addr v3, v2
+ 
+-    mul-int/lit8 v3, v1, 0x2
++    .line 256
++    mul-int v9, v9, v11
+ 
+-    mul-int/lit8 v5, v2, 0x2
++    int-to-float v2, v9
+ 
+-    .line 140
+-    array-length v6, p1
++    mul-float v1, v1, v12
+ 
+-    invoke-static {p1, v4, v6}, Landroid/graphics/BitmapFactory;->decodeByteArray([BII)Landroid/graphics/Bitmap;
++    add-float/2addr v2, v1
+ 
+-    move-result-object v4
++    invoke-static {v2}, Ljava/lang/Math;->round(F)I
+ 
+-    if-eqz v4, :cond_1
++    move-result v2
+ 
+-    const/4 p1, 0x1
++    invoke-static {v2, v10}, Llunaris/camerafix/RawJpegFix;->clampInt(II)I
+ 
+-    .line 142
+-    invoke-static {v4, v3, v5, p1}, Landroid/graphics/Bitmap;->createScaledBitmap(Landroid/graphics/Bitmap;IIZ)Landroid/graphics/Bitmap;
++    move-result v2
+ 
+-    move-result-object p1
++    .line 257
++    mul-int v8, v8, v11
+ 
+-    .line 143
+-    invoke-virtual {v4}, Landroid/graphics/Bitmap;->recycle()V
++    int-to-float v8, v8
+ 
+-    .line 144
+-    new-instance v1, Ljava/io/ByteArrayOutputStream;
++    mul-float v3, v3, v12
+ 
+-    invoke-direct {v1}, Ljava/io/ByteArrayOutputStream;-><init>()V
++    add-float/2addr v8, v3
+ 
+-    .line 145
+-    sget-object v2, Landroid/graphics/Bitmap$CompressFormat;->JPEG:Landroid/graphics/Bitmap$CompressFormat;
++    invoke-static {v8}, Ljava/lang/Math;->round(F)I
+ 
+-    invoke-virtual {p1, v2, v7, v1}, Landroid/graphics/Bitmap;->compress(Landroid/graphics/Bitmap$CompressFormat;ILjava/io/OutputStream;)Z
++    move-result v8
+ 
+-    .line 146
+-    invoke-virtual {p1}, Landroid/graphics/Bitmap;->recycle()V
++    invoke-static {v8, v10}, Llunaris/camerafix/RawJpegFix;->clampInt(II)I
+ 
+-    .line 147
+-    invoke-virtual {v1}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
++    move-result v8
+ 
+-    move-result-object p1
++    .line 258
++    mul-int v8, v8, v10
+ 
+-    .line 150
+-    new-instance v1, Ljava/lang/StringBuilder;
++    add-int/2addr v8, v2
+ 
+-    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
++    aget v2, v13, v8
+ 
+-    const-string v2, "encodeAndFinishAsync: front camera upscaled to "
++    .line 260
++    mul-int v0, v0, v11
+ 
+-    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    int-to-float v0, v0
+ 
+-    invoke-virtual {v1, v3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    add-float/2addr v0, v1
+ 
+-    const-string v2, "x"
++    invoke-static {v0}, Ljava/lang/Math;->round(F)I
+ 
+-    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    move-result v0
+ 
+-    invoke-virtual {v1, v5}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    invoke-static {v0, v10}, Llunaris/camerafix/RawJpegFix;->clampInt(II)I
+ 
+-    invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    move-result v0
+ 
+-    move-result-object v1
++    .line 261
++    mul-int v14, v14, v11
+ 
+-    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    int-to-float v1, v14
+ 
+-    move v1, v3
++    add-float/2addr v1, v3
+ 
+-    move v2, v5
++    invoke-static {v1}, Ljava/lang/Math;->round(F)I
+ 
+-    goto :goto_1
++    move-result v1
+ 
+-    .line 152
+-    :cond_1
+-    const-string v3, "encodeAndFinishAsync: front upscale decode failed, keeping native size"
++    invoke-static {v1, v10}, Llunaris/camerafix/RawJpegFix;->clampInt(II)I
+ 
+-    invoke-static {v0, v3}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+-    :try_end_0
+-    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++    move-result v1
+ 
+-    .line 159
+-    :cond_2
+-    :goto_1
+-    invoke-static {p0, p1, v1, v2}, Llunaris/camerafix/RawJpegFix;->finishAsync(Landroid/content/Context;[BII)V
++    .line 262
++    mul-int v1, v1, v10
+ 
+-    return-void
++    add-int/2addr v1, v0
+ 
+-    :catchall_0
+-    move-exception p0
++    aget v0, v13, v1
+ 
+-    .line 156
+-    const-string p1, "encodeAndFinishAsync: encode failed"
++    .line 264
++    invoke-static {v5, v6}, Ljava/lang/Math;->floor(D)D
+ 
+-    invoke-static {v0, p1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++    move-result-wide v5
+ 
+-    return-void
+-.end method
++    double-to-float v1, v5
+ 
+-.method private static findPendingMediaStoreId(Landroid/content/Context;)Ljava/lang/Long;
+-    .locals 7
++    sub-float/2addr v4, v1
+ 
+-    const/4 v0, 0x0
++    .line 266
++    shr-int/lit8 v1, v2, 0x10
+ 
+-    .line 286
+-    :try_start_0
+-    invoke-virtual {p0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
++    and-int/lit16 v1, v1, 0xff
+ 
+-    move-result-object v1
++    shr-int/lit8 v3, v2, 0x8
+ 
+-    .line 287
+-    const-string p0, "content://com.xiaomi.camera.parallelservice.provider.SpecialTypesProvider/processing"
++    and-int/lit16 v3, v3, 0xff
+ 
+-    invoke-static {p0}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
++    and-int/lit16 v2, v2, 0xff
+ 
+-    move-result-object v2
++    .line 267
++    shr-int/lit8 v5, v0, 0x10
+ 
+-    const/4 v5, 0x0
++    and-int/lit16 v5, v5, 0xff
+ 
+-    const/4 v6, 0x0
++    shr-int/lit8 v6, v0, 0x8
+ 
+-    const/4 v3, 0x0
++    and-int/lit16 v6, v6, 0xff
+ 
+-    const/4 v4, 0x0
++    and-int/lit16 v0, v0, 0xff
+ 
+-    .line 288
+-    invoke-virtual/range {v1 .. v6}, Landroid/content/ContentResolver;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
++    .line 269
++    int-to-float v8, v1
+ 
+-    move-result-object p0
+-    :try_end_0
+-    .catchall {:try_start_0 .. :try_end_0} :catchall_1
++    sub-int/2addr v5, v1
+ 
+-    if-nez p0, :cond_0
++    int-to-float v1, v5
+ 
+-    return-object v0
++    mul-float v1, v1, v4
+ 
+-    .line 293
+-    :cond_0
+-    :try_start_1
+-    const-string v1, "media_store_id"
++    add-float/2addr v8, v1
+ 
+-    invoke-interface {p0, v1}, Landroid/database/Cursor;->getColumnIndex(Ljava/lang/String;)I
++    invoke-static {v8}, Ljava/lang/Math;->round(F)I
+ 
+     move-result v1
+-    :try_end_1
+-    .catchall {:try_start_1 .. :try_end_1} :catchall_0
+ 
+-    if-gez v1, :cond_1
++    .line 270
++    int-to-float v5, v3
+ 
+-    .line 301
+-    :try_start_2
+-    invoke-interface {p0}, Landroid/database/Cursor;->close()V
+-    :try_end_2
+-    .catchall {:try_start_2 .. :try_end_2} :catchall_1
++    sub-int/2addr v6, v3
+ 
+-    return-object v0
++    int-to-float v3, v6
+ 
+-    .line 297
+-    :cond_1
+-    :try_start_3
+-    invoke-interface {p0}, Landroid/database/Cursor;->moveToFirst()Z
++    mul-float v3, v3, v4
+ 
+-    move-result v2
++    add-float/2addr v5, v3
+ 
+-    if-eqz v2, :cond_2
++    invoke-static {v5}, Ljava/lang/Math;->round(F)I
+ 
+-    .line 298
+-    invoke-interface {p0, v1}, Landroid/database/Cursor;->getLong(I)J
++    move-result v3
+ 
+-    move-result-wide v1
++    .line 271
++    int-to-float v5, v2
+ 
+-    invoke-static {v1, v2}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
++    sub-int/2addr v0, v2
+ 
+-    move-result-object v1
+-    :try_end_3
+-    .catchall {:try_start_3 .. :try_end_3} :catchall_0
++    int-to-float v0, v0
+ 
+-    .line 301
+-    :try_start_4
+-    invoke-interface {p0}, Landroid/database/Cursor;->close()V
++    mul-float v0, v0, v4
+ 
+-    return-object v1
++    add-float/2addr v5, v0
+ 
+-    :cond_2
+-    invoke-interface {p0}, Landroid/database/Cursor;->close()V
++    invoke-static {v5}, Ljava/lang/Math;->round(F)I
+ 
+-    goto :goto_0
++    move-result v0
+ 
+-    :catchall_0
+-    move-exception v1
++    .line 273
++    const/high16 v2, -0x1000000
+ 
+-    invoke-interface {p0}, Landroid/database/Cursor;->close()V
++    and-int v2, v18, v2
+ 
+-    .line 302
+-    throw v1
+-    :try_end_4
+-    .catchall {:try_start_4 .. :try_end_4} :catchall_1
++    shl-int/lit8 v1, v1, 0x10
+ 
+-    :catchall_1
+-    move-exception p0
++    or-int/2addr v1, v2
+ 
+-    .line 304
+-    const-string v1, "RawJpegFix"
++    shl-int/lit8 v2, v3, 0x8
+ 
+-    const-string v2, "findPendingMediaStoreId failed"
++    or-int/2addr v1, v2
+ 
+-    invoke-static {v1, v2, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++    or-int/2addr v0, v1
+ 
+-    :goto_0
+-    return-object v0
+-.end method
++    aput v0, v7, v15
+ 
+-.method private static finishAsync(Landroid/content/Context;[BII)V
+-    .locals 15
++    .line 241
++    add-int/lit8 v0, v15, 0x1
+ 
+-    move-object/from16 v0, p1
++    move/from16 v14, p1
+ 
+-    .line 227
+-    const-string v1, " "
++    move-object v15, v7
+ 
+-    const-string v2, "_size"
++    move/from16 v8, v16
+ 
+-    const/4 v3, 0x0
++    move/from16 v9, v17
+ 
+-    const/4 v4, 0x0
++    goto/16 :goto_0
+ 
+-    move-object v6, v3
++    .line 276
++    :cond_0
++    move/from16 v16, v8
+ 
+-    const/4 v5, 0x0
++    move/from16 v17, v9
+ 
+-    :goto_0
+-    const/16 v7, 0x1e
++    move-object v7, v15
+ 
+-    .line 228
+-    const-string v8, "RawJpegFix"
++    sget-object v0, Landroid/graphics/Bitmap$Config;->ARGB_8888:Landroid/graphics/Bitmap$Config;
+ 
+-    if-ge v5, v7, :cond_1
++    move/from16 v6, v16
+ 
+-    .line 229
+-    :try_start_0
+-    invoke-static {p0}, Llunaris/camerafix/RawJpegFix;->findPendingMediaStoreId(Landroid/content/Context;)Ljava/lang/Long;
++    move/from16 v8, v17
+ 
+-    move-result-object v6
+-    :try_end_0
+-    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++    invoke-static {v6, v8, v0}, Landroid/graphics/Bitmap;->createBitmap(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;
+ 
+-    if-eqz v6, :cond_0
++    move-result-object v9
+ 
+-    goto :goto_1
++    .line 277
++    const/4 v2, 0x0
+ 
+-    :cond_0
+-    const-wide/16 v9, 0x64
++    const/4 v4, 0x0
+ 
+-    .line 234
+-    :try_start_1
+-    invoke-static {v9, v10}, Ljava/lang/Thread;->sleep(J)V
+-    :try_end_1
+-    .catch Ljava/lang/InterruptedException; {:try_start_1 .. :try_end_1} :catch_0
+-    .catchall {:try_start_1 .. :try_end_1} :catchall_0
++    const/4 v5, 0x0
+ 
+-    add-int/lit8 v5, v5, 0x1
++    move-object v0, v9
+ 
+-    goto :goto_0
++    move-object v1, v7
+ 
+-    .line 236
+-    :catch_0
++    move v3, v6
++
++    move v7, v8
++
++    invoke-virtual/range {v0 .. v7}, Landroid/graphics/Bitmap;->setPixels([IIIIIII)V
++
++    .line 278
++    return-object v9
++.end method
++
++.method private static clampInt(II)I
++    .locals 0
++
++    .line 282
++    if-gez p0, :cond_0
++
++    .line 283
++    const/4 p0, 0x0
++
++    return p0
++
++    .line 285
++    :cond_0
++    if-lt p0, p1, :cond_1
++
++    .line 286
++    add-int/lit8 p1, p1, -0x1
++
++    return p1
++
++    .line 288
++    :cond_1
++    return p0
++.end method
++
++.method private static clearProcessingEntry(Landroid/content/Context;J)V
++    .locals 3
++
++    .line 482
++    const-string v0, "RawJpegFix"
++
++    :try_start_0
++    invoke-virtual {p0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
++
++    move-result-object p0
++
++    .line 483
++    new-instance v1, Ljava/lang/StringBuilder;
++
++    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v2, "content://com.xiaomi.camera.parallelservice.provider.SpecialTypesProvider/processing/"
++
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1, p1, p2}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v1
++
++    invoke-static {v1}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
++
++    move-result-object v1
++
++    .line 484
++    const/4 v2, 0x0
++
++    invoke-virtual {p0, v1, v2, v2}, Landroid/content/ContentResolver;->delete(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I
++
++    move-result p0
++
++    .line 485
++    new-instance v1, Ljava/lang/StringBuilder;
++
++    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v2, "clearProcessingEntry: id="
++
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1, p1, p2}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
++
++    move-result-object p1
++
++    const-string p2, " rows="
++
++    invoke-virtual {p1, p2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p1
++
++    invoke-virtual {p1, p0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object p0
++
++    invoke-virtual {p0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p0
++
++    invoke-static {v0, p0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++
++    .line 488
++    goto :goto_0
++
++    .line 486
++    :catchall_0
++    move-exception p0
++
++    .line 487
++    const-string p1, "clearProcessingEntry failed"
++
++    invoke-static {v0, p1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    .line 489
++    :goto_0
++    return-void
++.end method
++
++.method private static encodeAndFinishAsync(Landroid/content/Context;Landroid/media/Image;)V
++    .locals 12
++
++    .line 113
++    const-string v0, "RawJpegFix"
++
++    const/16 v1, 0xa
++
++    invoke-static {v1}, Landroid/os/Process;->setThreadPriority(I)V
++
++    .line 118
++    :try_start_0
++    invoke-virtual {p1}, Landroid/media/Image;->getWidth()I
++
++    move-result v1
++
++    .line 119
++    invoke-virtual {p1}, Landroid/media/Image;->getHeight()I
++
++    move-result v2
++
++    .line 120
++    invoke-static {p1}, Llunaris/camerafix/RawJpegFix;->yuv420ToNv21(Landroid/media/Image;)[B
++
++    move-result-object p1
++
++    .line 122
++    invoke-static {p0, v1, v2}, Llunaris/camerafix/RawJpegFix;->resolveCamInfo(Landroid/content/Context;II)Llunaris/camerafix/RawJpegFix$CamInfo;
++
++    move-result-object v3
++
++    .line 123
++    nop
++
++    .line 124
++    nop
++
++    .line 125
++    const/4 v4, 0x0
++
++    move-object v6, p1
++
++    const/4 p1, 0x0
++
++    :goto_0
++    iget v5, v3, Llunaris/camerafix/RawJpegFix$CamInfo;->rotationDegrees:I
++
++    div-int/lit8 v5, v5, 0x5a
++
++    if-ge p1, v5, :cond_0
++
++    .line 126
++    invoke-static {v6, v1, v2}, Llunaris/camerafix/RawJpegFix;->rotateNv21_90CW([BII)[B
++
++    move-result-object v6
++
++    .line 127
++    nop
++
++    .line 128
++    nop
++
++    .line 129
++    nop
++
++    .line 125
++    add-int/lit8 p1, p1, 0x1
++
++    move v11, v2
++
++    move v2, v1
++
++    move v1, v11
++
++    goto :goto_0
++
++    .line 132
++    :cond_0
++    new-instance p1, Landroid/graphics/YuvImage;
++
++    const/16 v7, 0x11
++
++    const/4 v10, 0x0
++
++    move-object v5, p1
++
++    move v8, v1
++
++    move v9, v2
++
++    invoke-direct/range {v5 .. v10}, Landroid/graphics/YuvImage;-><init>([BIII[I)V
++
++    .line 133
++    new-instance v5, Ljava/io/ByteArrayOutputStream;
++
++    invoke-direct {v5}, Ljava/io/ByteArrayOutputStream;-><init>()V
++
++    .line 134
++    new-instance v6, Landroid/graphics/Rect;
++
++    invoke-direct {v6, v4, v4, v1, v2}, Landroid/graphics/Rect;-><init>(IIII)V
++
++    const/16 v7, 0x5f
++
++    invoke-virtual {p1, v6, v7, v5}, Landroid/graphics/YuvImage;->compressToJpeg(Landroid/graphics/Rect;ILjava/io/OutputStream;)Z
++
++    .line 135
++    invoke-virtual {v5}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
++
++    move-result-object p1
++
++    .line 137
++    invoke-static {}, Llunaris/camerafix/RawJpegFix;->getActiveLutName()Ljava/lang/String;
++
++    move-result-object v5
++
++    .line 138
++    const/4 v6, 0x1
++
++    if-eqz v5, :cond_1
++
++    const/4 v8, 0x1
++
++    goto :goto_1
++
++    :cond_1
++    const/4 v8, 0x0
++
++    .line 139
++    :goto_1
++    iget-boolean v3, v3, Llunaris/camerafix/RawJpegFix$CamInfo;->frontFacing:Z
++
++    .line 141
++    if-nez v8, :cond_2
++
++    if-eqz v3, :cond_8
++
++    .line 142
++    :cond_2
++    array-length v9, p1
++
++    invoke-static {p1, v4, v9}, Landroid/graphics/BitmapFactory;->decodeByteArray([BII)Landroid/graphics/Bitmap;
++
++    move-result-object v9
++
++    .line 143
++    if-eqz v9, :cond_7
++
++    .line 144
++    nop
++
++    .line 145
++    nop
++
++    .line 147
++    if-eqz v8, :cond_4
++
++    .line 148
++    invoke-static {p0, v5}, Llunaris/camerafix/RawJpegFix;->loadLutBitmap(Landroid/content/Context;Ljava/lang/String;)Landroid/graphics/Bitmap;
++
++    move-result-object v8
++
++    .line 149
++    if-eqz v8, :cond_3
++
++    .line 150
++    invoke-static {v9, v8}, Llunaris/camerafix/RawJpegFix;->applyColorLookup(Landroid/graphics/Bitmap;Landroid/graphics/Bitmap;)Landroid/graphics/Bitmap;
++
++    move-result-object v4
++
++    .line 151
++    invoke-virtual {v8}, Landroid/graphics/Bitmap;->recycle()V
++
++    .line 152
++    invoke-virtual {v9}, Landroid/graphics/Bitmap;->recycle()V
++
++    .line 153
++    nop
++
++    .line 154
++    nop
++
++    .line 155
++    new-instance v8, Ljava/lang/StringBuilder;
++
++    invoke-direct {v8}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v9, "encodeAndFinishAsync: applied color filter "
++
++    invoke-virtual {v8, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v8
++
++    invoke-virtual {v8, v5}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v5
++
++    invoke-virtual {v5}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v5
++
++    invoke-static {v0, v5}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++
++    .line 156
++    move-object v9, v4
++
++    const/4 v4, 0x1
++
++    goto :goto_2
++
++    .line 157
++    :cond_3
++    new-instance v8, Ljava/lang/StringBuilder;
++
++    invoke-direct {v8}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v10, "encodeAndFinishAsync: LUT bitmap not found for "
++
++    invoke-virtual {v8, v10}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v8
++
++    invoke-virtual {v8, v5}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v5
++
++    invoke-virtual {v5}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v5
++
++    invoke-static {v0, v5}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++
++    .line 161
++    :cond_4
++    :goto_2
++    if-eqz v3, :cond_5
++
++    .line 162
++    invoke-virtual {v9}, Landroid/graphics/Bitmap;->getWidth()I
++
++    move-result v1
++
++    mul-int/lit8 v1, v1, 0x2
++
++    .line 163
++    invoke-virtual {v9}, Landroid/graphics/Bitmap;->getHeight()I
++
++    move-result v2
++
++    mul-int/lit8 v2, v2, 0x2
++
++    .line 164
++    invoke-static {v9, v1, v2, v6}, Landroid/graphics/Bitmap;->createScaledBitmap(Landroid/graphics/Bitmap;IIZ)Landroid/graphics/Bitmap;
++
++    move-result-object v3
++
++    .line 165
++    invoke-virtual {v9}, Landroid/graphics/Bitmap;->recycle()V
++
++    .line 166
++    nop
++
++    .line 167
++    nop
++
++    .line 168
++    nop
++
++    .line 169
++    nop
++
++    .line 170
++    new-instance v4, Ljava/lang/StringBuilder;
++
++    invoke-direct {v4}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v5, "encodeAndFinishAsync: front camera upscaled to "
++
++    invoke-virtual {v4, v5}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v4
++
++    invoke-virtual {v4, v1}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v4
++
++    const-string v5, "x"
++
++    invoke-virtual {v4, v5}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v4
++
++    invoke-virtual {v4, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v4
++
++    invoke-virtual {v4}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v4
++
++    invoke-static {v0, v4}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++
++    move-object v9, v3
++
++    goto :goto_3
++
++    .line 161
++    :cond_5
++    move v6, v4
++
++    .line 173
++    :goto_3
++    if-eqz v6, :cond_6
++
++    .line 174
++    new-instance p1, Ljava/io/ByteArrayOutputStream;
++
++    invoke-direct {p1}, Ljava/io/ByteArrayOutputStream;-><init>()V
++
++    .line 175
++    sget-object v3, Landroid/graphics/Bitmap$CompressFormat;->JPEG:Landroid/graphics/Bitmap$CompressFormat;
++
++    invoke-virtual {v9, v3, v7, p1}, Landroid/graphics/Bitmap;->compress(Landroid/graphics/Bitmap$CompressFormat;ILjava/io/OutputStream;)Z
++
++    .line 176
++    invoke-virtual {p1}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
++
++    move-result-object p1
++
++    .line 178
++    :cond_6
++    invoke-virtual {v9}, Landroid/graphics/Bitmap;->recycle()V
++
++    .line 179
++    goto :goto_4
++
++    .line 180
++    :cond_7
++    const-string v3, "encodeAndFinishAsync: decode failed, keeping unfiltered/native output"
++
++    invoke-static {v0, v3}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++
++    .line 186
++    :cond_8
++    :goto_4
++    nop
++
++    .line 187
++    invoke-static {p0, p1, v1, v2}, Llunaris/camerafix/RawJpegFix;->finishAsync(Landroid/content/Context;[BII)V
++
++    .line 188
++    return-void
++
++    .line 183
++    :catchall_0
++    move-exception p0
++
++    .line 184
++    const-string p1, "encodeAndFinishAsync: encode failed"
++
++    invoke-static {v0, p1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    .line 185
++    return-void
++.end method
++
++.method private static findPendingMediaStoreId(Landroid/content/Context;)Ljava/lang/Long;
++    .locals 7
++
++    .line 457
++    const/4 v0, 0x0
++
++    :try_start_0
++    invoke-virtual {p0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
++
++    move-result-object v1
++
++    .line 458
++    const-string p0, "content://com.xiaomi.camera.parallelservice.provider.SpecialTypesProvider/processing"
++
++    invoke-static {p0}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
++
++    move-result-object v2
++
++    .line 459
++    const/4 v3, 0x0
++
++    const/4 v4, 0x0
++
++    const/4 v5, 0x0
++
++    const/4 v6, 0x0
++
++    invoke-virtual/range {v1 .. v6}, Landroid/content/ContentResolver;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
++
++    move-result-object p0
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_1
++
++    .line 460
++    if-nez p0, :cond_0
++
++    .line 461
++    return-object v0
++
++    .line 464
++    :cond_0
++    :try_start_1
++    const-string v1, "media_store_id"
++
++    invoke-interface {p0, v1}, Landroid/database/Cursor;->getColumnIndex(Ljava/lang/String;)I
++
++    move-result v1
++    :try_end_1
++    .catchall {:try_start_1 .. :try_end_1} :catchall_0
++
++    .line 465
++    if-gez v1, :cond_1
++
++    .line 466
++    nop
++
++    .line 472
++    :try_start_2
++    invoke-interface {p0}, Landroid/database/Cursor;->close()V
++    :try_end_2
++    .catchall {:try_start_2 .. :try_end_2} :catchall_1
++
++    .line 466
++    return-object v0
++
++    .line 468
++    :cond_1
++    :try_start_3
++    invoke-interface {p0}, Landroid/database/Cursor;->moveToFirst()Z
++
++    move-result v2
++
++    if-eqz v2, :cond_2
++
++    .line 469
++    invoke-interface {p0, v1}, Landroid/database/Cursor;->getLong(I)J
++
++    move-result-wide v1
++
++    invoke-static {v1, v2}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
++
++    move-result-object v1
++    :try_end_3
++    .catchall {:try_start_3 .. :try_end_3} :catchall_0
++
++    .line 472
++    :try_start_4
++    invoke-interface {p0}, Landroid/database/Cursor;->close()V
++
++    .line 469
++    return-object v1
++
++    .line 472
++    :cond_2
++    invoke-interface {p0}, Landroid/database/Cursor;->close()V
++
++    .line 473
++    nop
++
++    .line 476
++    goto :goto_0
++
++    .line 472
++    :catchall_0
++    move-exception v1
++
++    invoke-interface {p0}, Landroid/database/Cursor;->close()V
++
++    .line 473
++    throw v1
++    :try_end_4
++    .catchall {:try_start_4 .. :try_end_4} :catchall_1
++
++    .line 474
++    :catchall_1
++    move-exception p0
++
++    .line 475
++    const-string v1, "RawJpegFix"
++
++    const-string v2, "findPendingMediaStoreId failed"
++
++    invoke-static {v1, v2, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    .line 477
++    :goto_0
++    return-object v0
++.end method
++
++.method private static finishAsync(Landroid/content/Context;[BII)V
++    .locals 18
++
++    .line 356
++    move-object/from16 v1, p0
++
++    move-object/from16 v2, p1
++
++    move/from16 v3, p2
++
++    move/from16 v4, p3
++
++    const-string v5, " "
++
++    const-string v6, "_size"
++
++    .line 357
++    const/4 v7, 0x0
++
++    const/4 v8, 0x0
++
++    move-object v9, v7
++
++    const/4 v0, 0x0
++
++    :goto_0
++    const/16 v10, 0x1e
++
++    const-string v11, "RawJpegFix"
++
++    if-ge v0, v10, :cond_1
++
++    .line 358
++    :try_start_0
++    invoke-static/range {p0 .. p0}, Llunaris/camerafix/RawJpegFix;->findPendingMediaStoreId(Landroid/content/Context;)Ljava/lang/Long;
++
++    move-result-object v9
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_4
++
++    .line 359
++    if-eqz v9, :cond_0
++
++    .line 360
++    goto :goto_1
++
++    .line 363
++    :cond_0
++    const-wide/16 v12, 0x64
++
++    :try_start_1
++    invoke-static {v12, v13}, Ljava/lang/Thread;->sleep(J)V
++    :try_end_1
++    .catch Ljava/lang/InterruptedException; {:try_start_1 .. :try_end_1} :catch_0
++    .catchall {:try_start_1 .. :try_end_1} :catchall_4
++
++    .line 367
++    nop
++
++    .line 357
++    add-int/lit8 v0, v0, 0x1
++
++    goto :goto_0
++
++    .line 364
++    :catch_0
++    move-exception v0
++
++    .line 365
+     :try_start_2
+     invoke-static {}, Ljava/lang/Thread;->currentThread()Ljava/lang/Thread;
+ 
+-    move-result-object v5
++    move-result-object v0
++
++    invoke-virtual {v0}, Ljava/lang/Thread;->interrupt()V
++
++    .line 366
++    nop
++
++    .line 370
++    :cond_1
++    :goto_1
++    invoke-virtual/range {p0 .. p0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
++
++    move-result-object v0
++
++    .line 372
++    if-nez v9, :cond_2
++
++    .line 373
++    const-string v5, "no pending mediaStore entry found after retries, publishing a new entry instead"
++
++    invoke-static {v11, v5}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++
++    .line 374
++    invoke-static {v1, v0, v2, v3, v4}, Llunaris/camerafix/RawJpegFix;->publishNewEntry(Landroid/content/Context;Landroid/content/ContentResolver;[BII)V
++
++    .line 375
++    return-void
++
++    .line 378
++    :cond_2
++    sget-object v10, Landroid/provider/MediaStore$Images$Media;->EXTERNAL_CONTENT_URI:Landroid/net/Uri;
++
++    invoke-virtual {v9}, Ljava/lang/Long;->longValue()J
++
++    move-result-wide v12
++
++    invoke-static {v10, v12, v13}, Landroid/content/ContentUris;->withAppendedId(Landroid/net/Uri;J)Landroid/net/Uri;
++
++    move-result-object v10
++
++    .line 379
++    invoke-static {v10}, Landroid/provider/MediaStore;->setIncludePending(Landroid/net/Uri;)Landroid/net/Uri;
++
++    move-result-object v10
++
++    .line 381
++    const/4 v12, 0x1
++
++    new-array v14, v12, [Ljava/lang/String;
++
++    aput-object v6, v14, v8
++
++    const/4 v15, 0x0
++
++    const/16 v16, 0x0
++
++    const/16 v17, 0x0
++
++    move-object v12, v0
++
++    move-object v13, v10
++
++    invoke-virtual/range {v12 .. v17}, Landroid/content/ContentResolver;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
++
++    move-result-object v12
++    :try_end_2
++    .catchall {:try_start_2 .. :try_end_2} :catchall_4
++
++    .line 382
++    if-eqz v12, :cond_5
++
++    :try_start_3
++    invoke-interface {v12}, Landroid/database/Cursor;->moveToFirst()Z
++
++    move-result v13
++
++    if-eqz v13, :cond_5
++
++    .line 383
++    invoke-interface {v12, v8}, Landroid/database/Cursor;->getLong(I)J
++
++    move-result-wide v13
++
++    .line 384
++    const-wide/32 v15, 0x200000
++
++    cmp-long v17, v13, v15
++
++    if-lez v17, :cond_5
++
++    .line 385
++    new-instance v0, Ljava/lang/StringBuilder;
++
++    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v1, "target already looks fixed ("
++
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v13, v14}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    const-string v1, " bytes), skipping id="
++
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v0
++
++    invoke-static {v11, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_3
++    .catchall {:try_start_3 .. :try_end_3} :catchall_0
++
++    .line 389
++    if-eqz v12, :cond_3
++
++    :try_start_4
++    invoke-interface {v12}, Landroid/database/Cursor;->close()V
++    :try_end_4
++    .catchall {:try_start_4 .. :try_end_4} :catchall_4
++
++    .line 386
++    :cond_3
++    return-void
++
++    .line 381
++    :catchall_0
++    move-exception v0
++
++    move-object v1, v0
++
++    if-eqz v12, :cond_4
++
++    :try_start_5
++    invoke-interface {v12}, Landroid/database/Cursor;->close()V
++    :try_end_5
++    .catchall {:try_start_5 .. :try_end_5} :catchall_1
++
++    goto :goto_2
++
++    :catchall_1
++    move-exception v0
++
++    move-object v2, v0
++
++    :try_start_6
++    invoke-static {v1, v2}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
++
++    :cond_4
++    :goto_2
++    throw v1
++
++    .line 389
++    :cond_5
++    if-eqz v12, :cond_6
++
++    invoke-interface {v12}, Landroid/database/Cursor;->close()V
++
++    .line 391
++    :cond_6
++    const-string v12, "wt"
++
++    invoke-virtual {v0, v10, v12}, Landroid/content/ContentResolver;->openOutputStream(Landroid/net/Uri;Ljava/lang/String;)Ljava/io/OutputStream;
++
++    move-result-object v12
++    :try_end_6
++    .catchall {:try_start_6 .. :try_end_6} :catchall_4
++
++    .line 392
++    if-nez v12, :cond_8
++
++    .line 393
++    :try_start_7
++    new-instance v0, Ljava/lang/StringBuilder;
++
++    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v1, "openOutputStream returned null for id="
++
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v0
++
++    invoke-static {v11, v0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_7
++    .catchall {:try_start_7 .. :try_end_7} :catchall_2
++
++    .line 397
++    if-eqz v12, :cond_7
++
++    :try_start_8
++    invoke-virtual {v12}, Ljava/io/OutputStream;->close()V
++    :try_end_8
++    .catchall {:try_start_8 .. :try_end_8} :catchall_4
++
++    .line 394
++    :cond_7
++    return-void
++
++    .line 396
++    :cond_8
++    :try_start_9
++    invoke-virtual {v12, v2}, Ljava/io/OutputStream;->write([B)V
++    :try_end_9
++    .catchall {:try_start_9 .. :try_end_9} :catchall_2
++
++    .line 397
++    if-eqz v12, :cond_9
++
++    :try_start_a
++    invoke-virtual {v12}, Ljava/io/OutputStream;->close()V
++
++    .line 399
++    :cond_9
++    new-instance v12, Landroid/content/ContentValues;
++
++    invoke-direct {v12}, Landroid/content/ContentValues;-><init>()V
++
++    .line 400
++    array-length v13, v2
++
++    invoke-static {v13}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++
++    move-result-object v13
++
++    invoke-virtual {v12, v6, v13}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++
++    .line 401
++    const-string v6, "width"
++
++    invoke-static/range {p2 .. p2}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++
++    move-result-object v13
++
++    invoke-virtual {v12, v6, v13}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++
++    .line 402
++    const-string v6, "height"
++
++    invoke-static/range {p3 .. p3}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++
++    move-result-object v13
++
++    invoke-virtual {v12, v6, v13}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++
++    .line 403
++    const-string v6, "is_pending"
++
++    invoke-static {v8}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++
++    move-result-object v8
++
++    invoke-virtual {v12, v6, v8}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++
++    .line 404
++    const-string v6, "date_modified"
++
++    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
++
++    move-result-wide v13
++
++    const-wide/16 v15, 0x3e8
++
++    div-long/2addr v13, v15
++
++    invoke-static {v13, v14}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
++
++    move-result-object v8
++
++    invoke-virtual {v12, v6, v8}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Long;)V
++
++    .line 405
++    invoke-virtual {v0, v10, v12, v7, v7}, Landroid/content/ContentResolver;->update(Landroid/net/Uri;Landroid/content/ContentValues;Ljava/lang/String;[Ljava/lang/String;)I
++
++    move-result v0
++
++    .line 407
++    array-length v2, v2
++
++    new-instance v6, Ljava/lang/StringBuilder;
++
++    invoke-direct {v6}, Ljava/lang/StringBuilder;-><init>()V
++
++    const-string v7, "finishAsync: published id="
++
++    invoke-virtual {v6, v7}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v6
++
++    invoke-virtual {v6, v9}, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
++
++    move-result-object v6
++
++    const-string v7, " rows="
++
++    invoke-virtual {v6, v7}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v6
++
++    invoke-virtual {v6, v0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v5}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    const-string v3, "x"
++
++    invoke-virtual {v0, v3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v4}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v5}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    const-string v2, " bytes"
++
++    invoke-virtual {v0, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v0
++
++    invoke-static {v11, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++
++    .line 410
++    invoke-virtual {v9}, Ljava/lang/Long;->longValue()J
++
++    move-result-wide v2
++
++    invoke-static {v1, v2, v3}, Llunaris/camerafix/RawJpegFix;->clearProcessingEntry(Landroid/content/Context;J)V
++    :try_end_a
++    .catchall {:try_start_a .. :try_end_a} :catchall_4
++
++    .line 413
++    goto :goto_4
++
++    .line 391
++    :catchall_2
++    move-exception v0
++
++    move-object v1, v0
++
++    if-eqz v12, :cond_a
++
++    :try_start_b
++    invoke-virtual {v12}, Ljava/io/OutputStream;->close()V
++    :try_end_b
++    .catchall {:try_start_b .. :try_end_b} :catchall_3
++
++    goto :goto_3
++
++    :catchall_3
++    move-exception v0
++
++    move-object v2, v0
++
++    :try_start_c
++    invoke-static {v1, v2}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
++
++    :cond_a
++    :goto_3
++    throw v1
++    :try_end_c
++    .catchall {:try_start_c .. :try_end_c} :catchall_4
++
++    .line 411
++    :catchall_4
++    move-exception v0
++
++    .line 412
++    const-string v1, "finishAsync failed"
++
++    invoke-static {v11, v1, v0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    .line 414
++    :goto_4
++    return-void
++.end method
++
++.method private static getActiveLutName()Ljava/lang/String;
++    .locals 10
++
++    .line 192
++    const-string v0, "RawJpegFix"
++
++    const/4 v1, 0x0
++
++    :try_start_0
++    const-string v2, "com.android.camera.effect.n"
++
++    invoke-static {v2}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++
++    move-result-object v2
++
++    .line 193
++    const-string v3, "getInstance"
++
++    const/4 v4, 0x0
++
++    new-array v5, v4, [Ljava/lang/Class;
++
++    invoke-virtual {v2, v3, v5}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
++
++    move-result-object v3
++
++    new-array v5, v4, [Ljava/lang/Object;
++
++    invoke-virtual {v3, v1, v5}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
++
++    move-result-object v3
++
++    .line 194
++    if-nez v3, :cond_0
++
++    .line 195
++    return-object v1
++
++    .line 197
++    :cond_0
++    const-string v5, "getEffectForSaving"
++
++    const/4 v6, 0x1
++
++    new-array v7, v6, [Ljava/lang/Class;
++
++    sget-object v8, Ljava/lang/Boolean;->TYPE:Ljava/lang/Class;
++
++    aput-object v8, v7, v4
++
++    .line 198
++    invoke-virtual {v2, v5, v7}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
++
++    move-result-object v5
++
++    new-array v7, v6, [Ljava/lang/Object;
++
++    .line 199
++    invoke-static {v4}, Ljava/lang/Boolean;->valueOf(Z)Ljava/lang/Boolean;
++
++    move-result-object v8
++
++    aput-object v8, v7, v4
++
++    invoke-virtual {v5, v3, v7}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
++
++    move-result-object v5
++
++    check-cast v5, Ljava/lang/Integer;
++
++    .line 197
++    invoke-virtual {v5}, Ljava/lang/Integer;->intValue()I
++
++    move-result v5
++
++    .line 200
++    const-string v7, "getLookupTableName"
++
++    new-array v8, v6, [Ljava/lang/Class;
++
++    sget-object v9, Ljava/lang/Integer;->TYPE:Ljava/lang/Class;
++
++    aput-object v9, v8, v4
++
++    .line 201
++    invoke-virtual {v2, v7, v8}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
++
++    move-result-object v2
++
++    new-array v6, v6, [Ljava/lang/Object;
++
++    .line 202
++    invoke-static {v5}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++
++    move-result-object v7
++
++    aput-object v7, v6, v4
++
++    invoke-virtual {v2, v3, v6}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
++
++    move-result-object v2
++
++    check-cast v2, Ljava/lang/String;
++
++    .line 203
++    if-eqz v2, :cond_2
++
++    invoke-virtual {v2}, Ljava/lang/String;->isEmpty()Z
++
++    move-result v3
++
++    if-eqz v3, :cond_1
++
++    goto :goto_0
++
++    .line 206
++    :cond_1
++    new-instance v3, Ljava/lang/StringBuilder;
++
++    invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
+ 
+-    invoke-virtual {v5}, Ljava/lang/Thread;->interrupt()V
++    const-string v4, "getActiveLutName: effectId="
+ 
+-    goto :goto_1
++    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v3
++
++    invoke-virtual {v3, v5}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v3
++
++    const-string v4, " name="
++
++    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v3
++
++    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v3
++
++    invoke-virtual {v3}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v3
++
++    invoke-static {v0, v3}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++
++    .line 207
++    return-object v2
++
++    .line 204
++    :cond_2
++    :goto_0
++    return-object v1
+ 
++    .line 208
+     :catchall_0
+-    move-exception v0
++    move-exception v2
+ 
+-    goto/16 :goto_4
++    .line 209
++    const-string v3, "getActiveLutName failed"
+ 
+-    :cond_1
+-    :goto_1
+-    if-nez v6, :cond_2
++    invoke-static {v0, v3, v2}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+ 
+-    .line 241
+-    const-string v0, "no pending mediaStore entry found after retries, skipping"
++    .line 210
++    return-object v1
++.end method
++
++.method public static handle(Landroid/media/Image;)V
++    .locals 12
++
++    .line 69
++    const-string v0, "RawJpegFix"
++
++    :try_start_0
++    invoke-virtual {p0}, Landroid/media/Image;->getFormat()I
++
++    move-result v1
++
++    invoke-virtual {p0}, Landroid/media/Image;->getWidth()I
++
++    move-result v2
++
++    invoke-virtual {p0}, Landroid/media/Image;->getHeight()I
++
++    move-result v3
++
++    new-instance v4, Ljava/lang/StringBuilder;
++
++    invoke-direct {v4}, Ljava/lang/StringBuilder;-><init>()V
+ 
+-    invoke-static {v8, v0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++    const-string v5, "handle: ENTER format="
+ 
++    invoke-virtual {v4, v5}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v4
++
++    invoke-virtual {v4, v1}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    const-string v4, " w="
++
++    invoke-virtual {v1, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    const-string v2, " h="
++
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1, v3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v1
++
++    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++
++    .line 70
++    invoke-virtual {p0}, Landroid/media/Image;->getFormat()I
++
++    move-result v1
++
++    const/16 v2, 0x23
++
++    if-eq v1, v2, :cond_0
++
++    .line 71
++    const-string p0, "handle: wrong format, skipping"
++
++    invoke-static {v0, p0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_1
++
++    .line 72
+     return-void
+ 
+-    .line 245
+-    :cond_2
+-    invoke-virtual {p0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
++    .line 74
++    :cond_0
++    nop
+ 
+-    move-result-object v5
++    .line 76
++    const/4 v1, 0x0
+ 
+-    .line 246
+-    sget-object v7, Landroid/provider/MediaStore$Images$Media;->EXTERNAL_CONTENT_URI:Landroid/net/Uri;
++    :try_start_1
++    const-string v2, "android.app.ActivityThread"
+ 
+-    invoke-virtual {v6}, Ljava/lang/Long;->longValue()J
++    invoke-static {v2}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
+ 
+-    move-result-wide v9
++    move-result-object v2
+ 
+-    invoke-static {v7, v9, v10}, Landroid/content/ContentUris;->withAppendedId(Landroid/net/Uri;J)Landroid/net/Uri;
++    .line 77
++    const-string v3, "currentApplication"
+ 
+-    move-result-object v7
++    const/4 v4, 0x0
+ 
+-    .line 247
+-    invoke-static {v7}, Landroid/provider/MediaStore;->setIncludePending(Landroid/net/Uri;)Landroid/net/Uri;
++    new-array v5, v4, [Ljava/lang/Class;
+ 
+-    move-result-object v7
++    invoke-virtual {v2, v3, v5}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
+ 
+-    const/4 v9, 0x1
++    move-result-object v2
+ 
+-    .line 249
+-    new-array v11, v9, [Ljava/lang/String;
++    new-array v3, v4, [Ljava/lang/Object;
+ 
+-    aput-object v2, v11, v4
++    invoke-virtual {v2, v1, v3}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
+ 
+-    const/4 v13, 0x0
++    move-result-object v2
+ 
+-    const/4 v14, 0x0
++    .line 78
++    check-cast v2, Landroid/content/Context;
++    :try_end_1
++    .catchall {:try_start_1 .. :try_end_1} :catchall_0
+ 
+-    const/4 v12, 0x0
++    .line 80
++    move-object v1, v2
+ 
+-    move-object v9, v5
++    goto :goto_0
+ 
+-    move-object v10, v7
++    .line 79
++    :catchall_0
++    move-exception v2
+ 
+-    invoke-virtual/range {v9 .. v14}, Landroid/content/ContentResolver;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
++    .line 81
++    :goto_0
++    if-nez v1, :cond_1
+ 
+-    move-result-object v9
+-    :try_end_2
+-    .catchall {:try_start_2 .. :try_end_2} :catchall_0
++    .line 82
++    :try_start_2
++    const-string p0, "no context, skipping"
+ 
+-    if-eqz v9, :cond_5
++    invoke-static {v0, p0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+ 
+-    .line 250
+-    :try_start_3
+-    invoke-interface {v9}, Landroid/database/Cursor;->moveToFirst()Z
++    .line 83
++    return-void
+ 
+-    move-result v10
++    .line 86
++    :cond_1
++    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
+ 
+-    if-eqz v10, :cond_5
++    move-result-wide v2
+ 
+-    .line 251
+-    invoke-interface {v9, v4}, Landroid/database/Cursor;->getLong(I)J
++    .line 87
++    sget-object v4, Llunaris/camerafix/RawJpegFix;->lastAccepted:Ljava/util/concurrent/atomic/AtomicLong;
++
++    invoke-virtual {v4}, Ljava/util/concurrent/atomic/AtomicLong;->get()J
+ 
+-    move-result-wide v10
++    move-result-wide v5
+ 
+-    const-wide/32 v12, 0x200000
++    .line 88
++    sub-long v7, v2, v5
+ 
+-    cmp-long v14, v10, v12
++    const-wide/16 v9, 0x9c4
+ 
+-    if-lez v14, :cond_5
++    cmp-long v11, v7, v9
+ 
+-    .line 253
+-    new-instance v0, Ljava/lang/StringBuilder;
++    if-ltz v11, :cond_3
+ 
+-    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
++    invoke-virtual {v4, v5, v6, v2, v3}, Ljava/util/concurrent/atomic/AtomicLong;->compareAndSet(JJ)Z
+ 
+-    const-string v1, "target already looks fixed ("
++    move-result v2
+ 
+-    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    if-nez v2, :cond_2
+ 
+-    invoke-virtual {v0, v10, v11}, Ljava/lang/StringBuilder;->append(J)Ljava/lang/StringBuilder;
++    goto :goto_1
+ 
+-    const-string v1, " bytes), skipping id="
++    .line 93
++    :cond_2
++    nop
+ 
+-    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    .line 94
++    new-instance v2, Ljava/lang/Thread;
+ 
+-    invoke-virtual {v0, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
++    new-instance v3, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2;
+ 
+-    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    invoke-direct {v3, v1, p0}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2;-><init>(Landroid/content/Context;Landroid/media/Image;)V
+ 
+-    move-result-object v0
++    const-string p0, "RawJpegFix-worker"
+ 
+-    invoke-static {v8, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+-    :try_end_3
+-    .catchall {:try_start_3 .. :try_end_3} :catchall_1
++    invoke-direct {v2, v3, p0}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;Ljava/lang/String;)V
+ 
+-    if-eqz v9, :cond_3
++    .line 95
++    const/4 p0, 0x1
+ 
+-    .line 257
+-    :try_start_4
+-    invoke-interface {v9}, Landroid/database/Cursor;->close()V
+-    :try_end_4
+-    .catchall {:try_start_4 .. :try_end_4} :catchall_0
++    invoke-virtual {v2, p0}, Ljava/lang/Thread;->setDaemon(Z)V
++
++    .line 96
++    invoke-virtual {v2}, Ljava/lang/Thread;->start()V
+ 
++    .line 99
++    goto :goto_2
++
++    .line 89
+     :cond_3
++    :goto_1
++    const-string p0, "handle: debounced (another frame from the same burst already handling this capture)"
++
++    invoke-static {v0, p0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_2
++    .catchall {:try_start_2 .. :try_end_2} :catchall_1
++
++    .line 90
+     return-void
+ 
++    .line 97
+     :catchall_1
+-    move-exception v0
++    move-exception p0
+ 
+-    move-object v1, v0
++    .line 98
++    const-string v1, "handle failed"
++
++    invoke-static {v0, v1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    .line 100
++    :goto_2
++    return-void
++.end method
++
++.method static synthetic lambda$handle$1(Landroid/content/Context;Landroid/media/Image;)V
++    .locals 0
++
++    .line 94
++    invoke-static {p0, p1}, Llunaris/camerafix/RawJpegFix;->encodeAndFinishAsync(Landroid/content/Context;Landroid/media/Image;)V
++
++    return-void
++.end method
++
++.method static synthetic lambda$preload$0()V
++    .locals 11
++
++    .line 42
++    const-string v0, "RawJpegFix"
++
++    :try_start_0
++    const-string v1, "android.graphics.YuvImage"
++
++    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++
++    .line 43
++    const-string v1, "android.media.MediaScannerConnection"
++
++    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++
++    .line 44
++    const-string v1, "android.content.ContentValues"
++
++    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++
++    .line 45
++    const-string v1, "android.app.ActivityThread"
++
++    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++
++    move-result-object v1
++
++    const-string v2, "currentApplication"
+ 
+-    if-eqz v9, :cond_4
++    const/4 v3, 0x0
+ 
+-    .line 249
+-    :try_start_5
+-    invoke-interface {v9}, Landroid/database/Cursor;->close()V
+-    :try_end_5
+-    .catchall {:try_start_5 .. :try_end_5} :catchall_2
++    new-array v4, v3, [Ljava/lang/Class;
+ 
+-    goto :goto_2
++    .line 46
++    invoke-virtual {v1, v2, v4}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
+ 
+-    :catchall_2
+-    move-exception v0
++    move-result-object v1
+ 
+-    move-object v2, v0
++    new-array v2, v3, [Ljava/lang/Object;
+ 
+-    :try_start_6
+-    invoke-static {v1, v2}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
++    const/4 v4, 0x0
+ 
+-    :cond_4
+-    :goto_2
+-    throw v1
++    invoke-virtual {v1, v4, v2}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
+ 
+-    :cond_5
+-    if-eqz v9, :cond_6
++    .line 48
++    nop
+ 
+-    .line 257
+-    invoke-interface {v9}, Landroid/database/Cursor;->close()V
++    .line 49
++    nop
+ 
+-    .line 259
+-    :cond_6
+-    const-string v9, "wt"
++    .line 50
++    const/16 v1, 0x1800
+ 
+-    invoke-virtual {v5, v7, v9}, Landroid/content/ContentResolver;->openOutputStream(Landroid/net/Uri;Ljava/lang/String;)Ljava/io/OutputStream;
++    new-array v1, v1, [B
+ 
+-    move-result-object v9
+-    :try_end_6
+-    .catchall {:try_start_6 .. :try_end_6} :catchall_0
++    .line 51
++    const/4 v2, 0x0
+ 
+-    if-nez v9, :cond_8
++    :goto_0
++    const/4 v4, 0x3
+ 
+-    .line 261
+-    :try_start_7
+-    new-instance v0, Ljava/lang/StringBuilder;
++    if-ge v2, v4, :cond_0
+ 
+-    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
++    .line 52
++    new-instance v10, Landroid/graphics/YuvImage;
+ 
+-    const-string v1, "openOutputStream returned null for id="
++    const/16 v6, 0x11
+ 
+-    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    const/4 v9, 0x0
+ 
+-    invoke-virtual {v0, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
++    const/16 v7, 0x40
+ 
+-    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    const/16 v8, 0x40
+ 
+-    move-result-object v0
++    move-object v4, v10
+ 
+-    invoke-static {v8, v0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+-    :try_end_7
+-    .catchall {:try_start_7 .. :try_end_7} :catchall_3
++    move-object v5, v1
+ 
+-    if-eqz v9, :cond_7
++    invoke-direct/range {v4 .. v9}, Landroid/graphics/YuvImage;-><init>([BIII[I)V
+ 
+-    .line 265
+-    :try_start_8
+-    invoke-virtual {v9}, Ljava/io/OutputStream;->close()V
+-    :try_end_8
+-    .catchall {:try_start_8 .. :try_end_8} :catchall_0
++    .line 53
++    new-instance v4, Ljava/io/ByteArrayOutputStream;
+ 
+-    :cond_7
+-    return-void
++    invoke-direct {v4}, Ljava/io/ByteArrayOutputStream;-><init>()V
+ 
+-    .line 264
+-    :cond_8
+-    :try_start_9
+-    invoke-virtual {v9, v0}, Ljava/io/OutputStream;->write([B)V
+-    :try_end_9
+-    .catchall {:try_start_9 .. :try_end_9} :catchall_3
++    .line 54
++    new-instance v5, Landroid/graphics/Rect;
+ 
+-    if-eqz v9, :cond_9
++    const/16 v6, 0x40
+ 
+-    .line 265
+-    :try_start_a
+-    invoke-virtual {v9}, Ljava/io/OutputStream;->close()V
++    invoke-direct {v5, v3, v3, v6, v6}, Landroid/graphics/Rect;-><init>(IIII)V
+ 
+-    .line 267
+-    :cond_9
+-    new-instance v9, Landroid/content/ContentValues;
++    const/16 v6, 0x5a
+ 
+-    invoke-direct {v9}, Landroid/content/ContentValues;-><init>()V
++    invoke-virtual {v10, v5, v6, v4}, Landroid/graphics/YuvImage;->compressToJpeg(Landroid/graphics/Rect;ILjava/io/OutputStream;)Z
+ 
+-    .line 268
+-    array-length v10, v0
++    .line 55
++    invoke-virtual {v4}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
+ 
+-    invoke-static {v10}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++    .line 51
++    add-int/lit8 v2, v2, 0x1
+ 
+-    move-result-object v10
++    goto :goto_0
+ 
+-    invoke-virtual {v9, v2, v10}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++    .line 57
++    :cond_0
++    const-string v1, "preload: warmup complete"
+ 
+-    .line 269
+-    const-string v2, "width"
++    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_0
+ 
+-    invoke-static/range {p2 .. p2}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++    .line 60
++    goto :goto_1
+ 
+-    move-result-object v10
++    .line 58
++    :catchall_0
++    move-exception v1
+ 
+-    invoke-virtual {v9, v2, v10}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++    .line 59
++    const-string v2, "preload: warmup failed (non-fatal)"
+ 
+-    .line 270
+-    const-string v2, "height"
++    invoke-static {v0, v2, v1}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+ 
+-    invoke-static/range {p3 .. p3}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++    .line 61
++    :goto_1
++    return-void
++.end method
+ 
+-    move-result-object v10
++.method private static loadLutBitmap(Landroid/content/Context;Ljava/lang/String;)Landroid/graphics/Bitmap;
++    .locals 5
+ 
+-    invoke-virtual {v9, v2, v10}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++    .line 216
++    const-string v0, "RawJpegFix"
+ 
+-    .line 271
+-    const-string v2, "is_pending"
++    const/4 v1, 0x0
+ 
+-    invoke-static {v4}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
++    :try_start_0
++    invoke-virtual {p0}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
+ 
+-    move-result-object v4
++    move-result-object v2
+ 
+-    invoke-virtual {v9, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
++    const-string v3, "raw"
+ 
+-    .line 272
+-    const-string v2, "date_modified"
++    invoke-virtual {p0}, Landroid/content/Context;->getPackageName()Ljava/lang/String;
+ 
+-    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
++    move-result-object v4
+ 
+-    move-result-wide v10
++    invoke-virtual {v2, p1, v3, v4}, Landroid/content/res/Resources;->getIdentifier(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I
+ 
+-    const-wide/16 v12, 0x3e8
++    move-result v2
+ 
+-    div-long/2addr v10, v12
++    .line 217
++    if-nez v2, :cond_0
+ 
+-    invoke-static {v10, v11}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
++    .line 218
++    new-instance p0, Ljava/lang/StringBuilder;
+ 
+-    move-result-object v4
++    invoke-direct {p0}, Ljava/lang/StringBuilder;-><init>()V
+ 
+-    invoke-virtual {v9, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Long;)V
++    const-string v2, "loadLutBitmap: no raw resource named "
+ 
+-    .line 273
+-    invoke-virtual {v5, v7, v9, v3, v3}, Landroid/content/ContentResolver;->update(Landroid/net/Uri;Landroid/content/ContentValues;Ljava/lang/String;[Ljava/lang/String;)I
++    invoke-virtual {p0, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    move-result v2
++    move-result-object p0
+ 
+-    .line 275
+-    array-length v0, v0
++    invoke-virtual {p0, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    new-instance v3, Ljava/lang/StringBuilder;
++    move-result-object p0
+ 
+-    invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
++    invoke-virtual {p0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+ 
+-    const-string v4, "finishAsync: published id="
++    move-result-object p0
+ 
+-    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    invoke-static {v0, p0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+ 
+-    invoke-virtual {v3, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
++    .line 219
++    return-object v1
+ 
+-    const-string v4, " rows="
++    .line 221
++    :cond_0
++    invoke-virtual {p0}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
+ 
+-    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    move-result-object p0
+ 
+-    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    invoke-virtual {p0, v2}, Landroid/content/res/Resources;->openRawResource(I)Ljava/io/InputStream;
+ 
+-    invoke-virtual {v3, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    move-result-object p0
+ 
+-    move/from16 v2, p2
++    invoke-static {p0}, Landroid/graphics/BitmapFactory;->decodeStream(Ljava/io/InputStream;)Landroid/graphics/Bitmap;
+ 
+-    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    move-result-object p0
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_0
+ 
+-    const-string v2, "x"
++    return-object p0
+ 
+-    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    .line 222
++    :catchall_0
++    move-exception p0
+ 
+-    move/from16 v2, p3
++    .line 223
++    new-instance v2, Ljava/lang/StringBuilder;
+ 
+-    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    invoke-direct {v2}, Ljava/lang/StringBuilder;-><init>()V
+ 
+-    invoke-virtual {v3, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    const-string v3, "loadLutBitmap failed for "
+ 
+-    invoke-virtual {v3, v0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    invoke-virtual {v2, v3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    const-string v0, " bytes"
++    move-result-object v2
+ 
+-    invoke-virtual {v3, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    invoke-virtual {v2, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    invoke-virtual {v3}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    move-result-object p1
+ 
+-    move-result-object v0
++    invoke-virtual {p1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+ 
+-    invoke-static {v8, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    move-result-object p1
+ 
+-    .line 278
+-    invoke-virtual {v6}, Ljava/lang/Long;->longValue()J
++    invoke-static {v0, p1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+ 
+-    move-result-wide v0
++    .line 224
++    return-object v1
++.end method
+ 
+-    move-object v2, p0
++.method public static preload()V
++    .locals 4
+ 
+-    invoke-static {p0, v0, v1}, Llunaris/camerafix/RawJpegFix;->clearProcessingEntry(Landroid/content/Context;J)V
+-    :try_end_a
+-    .catchall {:try_start_a .. :try_end_a} :catchall_0
++    .line 36
++    sget-boolean v0, Llunaris/camerafix/RawJpegFix;->preloaded:Z
+ 
+-    goto :goto_5
++    if-eqz v0, :cond_0
+ 
+-    :catchall_3
+-    move-exception v0
++    .line 37
++    return-void
+ 
+-    move-object v1, v0
++    .line 39
++    :cond_0
++    const/4 v0, 0x1
+ 
+-    if-eqz v9, :cond_a
++    sput-boolean v0, Llunaris/camerafix/RawJpegFix;->preloaded:Z
+ 
+-    .line 259
+-    :try_start_b
+-    invoke-virtual {v9}, Ljava/io/OutputStream;->close()V
+-    :try_end_b
+-    .catchall {:try_start_b .. :try_end_b} :catchall_4
++    .line 40
++    new-instance v1, Ljava/lang/Thread;
+ 
+-    goto :goto_3
++    new-instance v2, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1;
+ 
+-    :catchall_4
+-    move-exception v0
++    invoke-direct {v2}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1;-><init>()V
+ 
+-    move-object v2, v0
++    const-string v3, "RawJpegFix-preload"
+ 
+-    :try_start_c
+-    invoke-static {v1, v2}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
++    invoke-direct {v1, v2, v3}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;Ljava/lang/String;)V
+ 
+-    :cond_a
+-    :goto_3
+-    throw v1
+-    :try_end_c
+-    .catchall {:try_start_c .. :try_end_c} :catchall_0
++    .line 62
++    invoke-virtual {v1, v0}, Ljava/lang/Thread;->setDaemon(Z)V
+ 
+-    .line 280
+-    :goto_4
+-    const-string v1, "finishAsync failed"
++    .line 63
++    invoke-virtual {v1, v0}, Ljava/lang/Thread;->setPriority(I)V
+ 
+-    invoke-static {v8, v1, v0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++    .line 64
++    invoke-virtual {v1}, Ljava/lang/Thread;->start()V
+ 
+-    :goto_5
++    .line 65
+     return-void
+ .end method
+ 
+-.method public static handle(Landroid/media/Image;)V
+-    .locals 12
+-
+-    .line 69
+-    const-string v0, "RawJpegFix"
+-
+-    .line 0
+-    const-string v1, "handle: ENTER format="
++.method private static publishNewEntry(Landroid/content/Context;Landroid/content/ContentResolver;[BII)V
++    .locals 8
+ 
+-    .line 69
+-    :try_start_0
+-    invoke-virtual {p0}, Landroid/media/Image;->getFormat()I
++    .line 418
++    const-string p0, " "
+ 
+-    move-result v2
++    const-string v0, "is_pending"
+ 
+-    invoke-virtual {p0}, Landroid/media/Image;->getWidth()I
++    const-string v1, "RawJpegFix"
+ 
+-    move-result v3
++    :try_start_0
++    new-instance v2, Ljava/text/SimpleDateFormat;
+ 
+-    invoke-virtual {p0}, Landroid/media/Image;->getHeight()I
++    const-string v3, "yyyyMMdd_HHmmss"
+ 
+-    move-result v4
++    sget-object v4, Ljava/util/Locale;->US:Ljava/util/Locale;
+ 
+-    new-instance v5, Ljava/lang/StringBuilder;
++    invoke-direct {v2, v3, v4}, Ljava/text/SimpleDateFormat;-><init>(Ljava/lang/String;Ljava/util/Locale;)V
+ 
+-    invoke-direct {v5, v1}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++    new-instance v3, Ljava/util/Date;
+ 
+-    invoke-virtual {v5, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    invoke-direct {v3}, Ljava/util/Date;-><init>()V
+ 
+-    const-string v1, " w="
++    .line 419
++    invoke-virtual {v2, v3}, Ljava/text/SimpleDateFormat;->format(Ljava/util/Date;)Ljava/lang/String;
+ 
+-    invoke-virtual {v5, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    move-result-object v2
+ 
+-    invoke-virtual {v5, v3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    new-instance v3, Ljava/lang/StringBuilder;
+ 
+-    const-string v1, " h="
++    invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
+ 
+-    invoke-virtual {v5, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    const-string v4, "IMG_"
+ 
+-    invoke-virtual {v5, v4}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    invoke-virtual {v5}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    move-result-object v3
+ 
+-    move-result-object v1
++    invoke-virtual {v3, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    move-result-object v2
+ 
+-    .line 70
+-    invoke-virtual {p0}, Landroid/media/Image;->getFormat()I
++    const-string v3, ".jpg"
+ 
+-    move-result v1
++    invoke-virtual {v2, v3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    const/16 v2, 0x23
++    move-result-object v2
+ 
+-    if-eq v1, v2, :cond_0
++    invoke-virtual {v2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+ 
+-    .line 71
+-    const-string p0, "handle: wrong format, skipping"
++    move-result-object v2
+ 
+-    invoke-static {v0, p0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+-    :try_end_0
+-    .catchall {:try_start_0 .. :try_end_0} :catchall_1
++    .line 421
++    new-instance v3, Landroid/content/ContentValues;
+ 
+-    return-void
++    invoke-direct {v3}, Landroid/content/ContentValues;-><init>()V
+ 
+-    :cond_0
+-    const/4 v1, 0x0
++    .line 422
++    const-string v4, "_display_name"
+ 
+-    .line 76
+-    :try_start_1
+-    const-string v2, "android.app.ActivityThread"
++    invoke-virtual {v3, v4, v2}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/String;)V
+ 
+-    invoke-static {v2}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++    .line 423
++    const-string v2, "mime_type"
+ 
+-    move-result-object v2
++    const-string v4, "image/jpeg"
+ 
+-    .line 77
+-    const-string v3, "currentApplication"
++    invoke-virtual {v3, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/String;)V
+ 
+-    invoke-virtual {v2, v3, v1}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
++    .line 424
++    const-string v2, "width"
+ 
+-    move-result-object v2
++    invoke-static {p3}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+ 
+-    invoke-virtual {v2, v1, v1}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
++    move-result-object v4
+ 
+-    move-result-object v2
++    invoke-virtual {v3, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
+ 
+-    .line 78
+-    check-cast v2, Landroid/content/Context;
+-    :try_end_1
+-    .catchall {:try_start_1 .. :try_end_1} :catchall_0
++    .line 425
++    const-string v2, "height"
+ 
+-    move-object v1, v2
++    invoke-static {p4}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+ 
+-    goto :goto_0
++    move-result-object v4
+ 
+-    :catchall_0
+-    nop
++    invoke-virtual {v3, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
+ 
+-    :goto_0
+-    if-nez v1, :cond_1
++    .line 426
++    const-string v2, "relative_path"
+ 
+-    .line 82
+-    :try_start_2
+-    const-string p0, "no context, skipping"
++    const-string v4, "DCIM/Camera"
+ 
+-    invoke-static {v0, p0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++    invoke-virtual {v3, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/String;)V
+ 
+-    return-void
++    .line 427
++    const/4 v2, 0x1
+ 
+-    .line 86
+-    :cond_1
+-    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
++    invoke-static {v2}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+ 
+-    move-result-wide v2
++    move-result-object v2
+ 
+-    .line 87
+-    sget-object v4, Llunaris/camerafix/RawJpegFix;->lastAccepted:Ljava/util/concurrent/atomic/AtomicLong;
++    invoke-virtual {v3, v0, v2}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
+ 
+-    invoke-virtual {v4}, Ljava/util/concurrent/atomic/AtomicLong;->get()J
++    .line 428
++    const-string v2, "date_added"
+ 
+-    move-result-wide v5
++    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
+ 
+-    sub-long v7, v2, v5
++    move-result-wide v4
+ 
+-    const-wide/16 v9, 0x9c4
++    const-wide/16 v6, 0x3e8
+ 
+-    cmp-long v11, v7, v9
++    div-long/2addr v4, v6
+ 
+-    if-ltz v11, :cond_3
++    invoke-static {v4, v5}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
+ 
+-    .line 88
+-    invoke-virtual {v4, v5, v6, v2, v3}, Ljava/util/concurrent/atomic/AtomicLong;->compareAndSet(JJ)Z
++    move-result-object v4
+ 
+-    move-result v2
++    invoke-virtual {v3, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Long;)V
+ 
+-    if-nez v2, :cond_2
++    .line 429
++    const-string v2, "date_modified"
+ 
+-    goto :goto_1
++    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
+ 
+-    .line 94
+-    :cond_2
+-    new-instance v2, Ljava/lang/Thread;
++    move-result-wide v4
+ 
+-    new-instance v3, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2;
++    div-long/2addr v4, v6
+ 
+-    invoke-direct {v3, v1, p0}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda2;-><init>(Landroid/content/Context;Landroid/media/Image;)V
++    invoke-static {v4, v5}, Ljava/lang/Long;->valueOf(J)Ljava/lang/Long;
+ 
+-    const-string p0, "RawJpegFix-worker"
++    move-result-object v4
+ 
+-    invoke-direct {v2, v3, p0}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;Ljava/lang/String;)V
++    invoke-virtual {v3, v2, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Long;)V
+ 
+-    const/4 p0, 0x1
++    .line 431
++    sget-object v2, Landroid/provider/MediaStore$Images$Media;->EXTERNAL_CONTENT_URI:Landroid/net/Uri;
+ 
+-    .line 95
+-    invoke-virtual {v2, p0}, Ljava/lang/Thread;->setDaemon(Z)V
++    invoke-virtual {p1, v2, v3}, Landroid/content/ContentResolver;->insert(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;
+ 
+-    .line 96
+-    invoke-virtual {v2}, Ljava/lang/Thread;->start()V
++    move-result-object v2
+ 
+-    goto :goto_2
++    .line 432
++    if-nez v2, :cond_0
+ 
+-    .line 89
+-    :cond_3
+-    :goto_1
+-    const-string p0, "handle: debounced (another frame from the same burst already handling this capture)"
++    .line 433
++    const-string p0, "publishNewEntry: insert returned null"
+ 
+-    invoke-static {v0, p0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+-    :try_end_2
+-    .catchall {:try_start_2 .. :try_end_2} :catchall_1
++    invoke-static {v1, p0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+ 
++    .line 434
+     return-void
+ 
+-    :catchall_1
+-    move-exception p0
++    .line 437
++    :cond_0
++    invoke-virtual {p1, v2}, Landroid/content/ContentResolver;->openOutputStream(Landroid/net/Uri;)Ljava/io/OutputStream;
+ 
+-    .line 98
+-    const-string v1, "handle failed"
++    move-result-object v3
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_2
+ 
+-    invoke-static {v0, v1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++    .line 438
++    if-nez v3, :cond_2
+ 
+-    :goto_2
+-    return-void
+-.end method
++    .line 439
++    :try_start_1
++    invoke-static {v2}, Ljava/lang/String;->valueOf(Ljava/lang/Object;)Ljava/lang/String;
+ 
+-.method static synthetic lambda$handle$1(Landroid/content/Context;Landroid/media/Image;)V
+-    .locals 0
++    move-result-object p0
+ 
+-    .line 94
+-    invoke-static {p0, p1}, Llunaris/camerafix/RawJpegFix;->encodeAndFinishAsync(Landroid/content/Context;Landroid/media/Image;)V
++    new-instance p1, Ljava/lang/StringBuilder;
+ 
+-    return-void
+-.end method
++    invoke-direct {p1}, Ljava/lang/StringBuilder;-><init>()V
+ 
+-.method static synthetic lambda$preload$0()V
+-    .locals 13
++    const-string p2, "publishNewEntry: openOutputStream returned null for "
+ 
+-    .line 42
+-    const-string v0, "RawJpegFix"
++    invoke-virtual {p1, p2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    :try_start_0
+-    const-string v1, "android.graphics.YuvImage"
++    move-result-object p1
+ 
+-    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++    invoke-virtual {p1, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    .line 43
+-    const-string v1, "android.media.MediaScannerConnection"
++    move-result-object p0
+ 
+-    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++    invoke-virtual {p0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+ 
+-    .line 44
+-    const-string v1, "android.content.ContentValues"
++    move-result-object p0
+ 
+-    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++    invoke-static {v1, p0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_1
++    .catchall {:try_start_1 .. :try_end_1} :catchall_0
+ 
+-    .line 45
+-    const-string v1, "android.app.ActivityThread"
++    .line 443
++    if-eqz v3, :cond_1
+ 
+-    invoke-static {v1}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
++    :try_start_2
++    invoke-virtual {v3}, Ljava/io/OutputStream;->close()V
++    :try_end_2
++    .catchall {:try_start_2 .. :try_end_2} :catchall_2
+ 
+-    move-result-object v1
++    .line 440
++    :cond_1
++    return-void
+ 
+-    const-string v2, "currentApplication"
++    .line 442
++    :cond_2
++    :try_start_3
++    invoke-virtual {v3, p2}, Ljava/io/OutputStream;->write([B)V
++    :try_end_3
++    .catchall {:try_start_3 .. :try_end_3} :catchall_0
+ 
+-    const/4 v3, 0x0
++    .line 443
++    if-eqz v3, :cond_3
+ 
+-    .line 46
+-    invoke-virtual {v1, v2, v3}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
++    :try_start_4
++    invoke-virtual {v3}, Ljava/io/OutputStream;->close()V
+ 
+-    move-result-object v1
++    .line 445
++    :cond_3
++    new-instance v3, Landroid/content/ContentValues;
+ 
+-    invoke-virtual {v1, v3, v3}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;
++    invoke-direct {v3}, Landroid/content/ContentValues;-><init>()V
+ 
+-    const/16 v1, 0x1800
++    .line 446
++    const/4 v4, 0x0
+ 
+-    .line 50
+-    new-array v1, v1, [B
++    invoke-static {v4}, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+ 
+-    const/4 v8, 0x0
++    move-result-object v4
+ 
+-    const/4 v9, 0x0
++    invoke-virtual {v3, v0, v4}, Landroid/content/ContentValues;->put(Ljava/lang/String;Ljava/lang/Integer;)V
+ 
+-    :goto_0
+-    const/4 v2, 0x3
++    .line 447
++    const/4 v0, 0x0
+ 
+-    if-ge v9, v2, :cond_0
++    invoke-virtual {p1, v2, v3, v0, v0}, Landroid/content/ContentResolver;->update(Landroid/net/Uri;Landroid/content/ContentValues;Ljava/lang/String;[Ljava/lang/String;)I
+ 
+-    .line 52
+-    new-instance v10, Landroid/graphics/YuvImage;
++    .line 449
++    invoke-static {v2}, Ljava/lang/String;->valueOf(Ljava/lang/Object;)Ljava/lang/String;
+ 
+-    const/16 v4, 0x11
++    move-result-object p1
+ 
+-    const/4 v7, 0x0
++    array-length p2, p2
+ 
+-    const/16 v11, 0x40
++    new-instance v0, Ljava/lang/StringBuilder;
+ 
+-    const/16 v12, 0x40
++    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V
+ 
+-    move-object v2, v10
++    const-string v2, "publishNewEntry: created "
+ 
+-    move-object v3, v1
++    invoke-virtual {v0, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    move v5, v11
++    move-result-object v0
+ 
+-    move v6, v12
++    invoke-virtual {v0, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    invoke-direct/range {v2 .. v7}, Landroid/graphics/YuvImage;-><init>([BIII[I)V
++    move-result-object p1
+ 
+-    .line 53
+-    new-instance v2, Ljava/io/ByteArrayOutputStream;
++    invoke-virtual {p1, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    invoke-direct {v2}, Ljava/io/ByteArrayOutputStream;-><init>()V
++    move-result-object p1
+ 
+-    .line 54
+-    new-instance v3, Landroid/graphics/Rect;
++    invoke-virtual {p1, p3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+ 
+-    invoke-direct {v3, v8, v8, v11, v12}, Landroid/graphics/Rect;-><init>(IIII)V
++    move-result-object p1
+ 
+-    const/16 v4, 0x5a
++    const-string p3, "x"
+ 
+-    invoke-virtual {v10, v3, v4, v2}, Landroid/graphics/YuvImage;->compressToJpeg(Landroid/graphics/Rect;ILjava/io/OutputStream;)Z
++    invoke-virtual {p1, p3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    .line 55
+-    invoke-virtual {v2}, Ljava/io/ByteArrayOutputStream;->toByteArray()[B
++    move-result-object p1
+ 
+-    add-int/lit8 v9, v9, 0x1
++    invoke-virtual {p1, p4}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+ 
+-    goto :goto_0
++    move-result-object p1
+ 
+-    .line 57
+-    :cond_0
+-    const-string v1, "preload: warmup complete"
++    invoke-virtual {p1, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+-    :try_end_0
+-    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++    move-result-object p0
+ 
+-    goto :goto_1
++    invoke-virtual {p0, p2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+ 
+-    :catchall_0
+-    move-exception v1
++    move-result-object p0
+ 
+-    .line 59
+-    const-string v2, "preload: warmup failed (non-fatal)"
++    const-string p1, " bytes"
+ 
+-    invoke-static {v0, v2, v1}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++    invoke-virtual {p0, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    :goto_1
+-    return-void
+-.end method
++    move-result-object p0
+ 
+-.method public static preload()V
+-    .locals 4
++    invoke-virtual {p0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+ 
+-    .line 36
+-    sget-boolean v0, Llunaris/camerafix/RawJpegFix;->preloaded:Z
++    move-result-object p0
+ 
+-    if-eqz v0, :cond_0
++    invoke-static {v1, p0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_4
++    .catchall {:try_start_4 .. :try_end_4} :catchall_2
+ 
+-    return-void
++    .line 452
++    goto :goto_1
+ 
+-    :cond_0
+-    const/4 v0, 0x1
++    .line 437
++    :catchall_0
++    move-exception p0
+ 
+-    .line 39
+-    sput-boolean v0, Llunaris/camerafix/RawJpegFix;->preloaded:Z
++    if-eqz v3, :cond_4
+ 
+-    .line 40
+-    new-instance v1, Ljava/lang/Thread;
++    :try_start_5
++    invoke-virtual {v3}, Ljava/io/OutputStream;->close()V
++    :try_end_5
++    .catchall {:try_start_5 .. :try_end_5} :catchall_1
+ 
+-    new-instance v2, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1;
++    goto :goto_0
+ 
+-    invoke-direct {v2}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticLambda1;-><init>()V
++    :catchall_1
++    move-exception p1
+ 
+-    const-string v3, "RawJpegFix-preload"
++    :try_start_6
++    invoke-static {p0, p1}, Llunaris/camerafix/RawJpegFix$$ExternalSyntheticBackport0;->m(Ljava/lang/Throwable;Ljava/lang/Throwable;)V
+ 
+-    invoke-direct {v1, v2, v3}, Ljava/lang/Thread;-><init>(Ljava/lang/Runnable;Ljava/lang/String;)V
++    :cond_4
++    :goto_0
++    throw p0
++    :try_end_6
++    .catchall {:try_start_6 .. :try_end_6} :catchall_2
+ 
+-    .line 62
+-    invoke-virtual {v1, v0}, Ljava/lang/Thread;->setDaemon(Z)V
++    .line 450
++    :catchall_2
++    move-exception p0
+ 
+-    .line 63
+-    invoke-virtual {v1, v0}, Ljava/lang/Thread;->setPriority(I)V
++    .line 451
++    const-string p1, "publishNewEntry failed"
+ 
+-    .line 64
+-    invoke-virtual {v1}, Ljava/lang/Thread;->start()V
++    invoke-static {v1, p1, p0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+ 
++    .line 453
++    :goto_1
+     return-void
+ .end method
+ 
+ .method private static resolveCamInfo(Landroid/content/Context;II)Llunaris/camerafix/RawJpegFix$CamInfo;
+     .locals 19
+ 
++    .line 293
+     move/from16 v0, p1
+ 
+     move/from16 v1, p2
+ 
+-    .line 164
+     const-string v2, "RawJpegFix"
+ 
+     const/16 v3, 0x5a
+@@ -1246,17 +2576,30 @@
+ 
+     check-cast v5, Landroid/hardware/camera2/CameraManager;
+ 
++    .line 294
+     if-nez v5, :cond_0
+ 
+-    .line 166
++    .line 295
+     new-instance v0, Llunaris/camerafix/RawJpegFix$CamInfo;
+ 
+     invoke-direct {v0, v3, v4}, Llunaris/camerafix/RawJpegFix$CamInfo;-><init>(IZ)V
+ 
+     return-object v0
+ 
+-    .line 172
++    .line 297
+     :cond_0
++    nop
++
++    .line 298
++    nop
++
++    .line 299
++    nop
++
++    .line 300
++    nop
++
++    .line 301
+     invoke-virtual {v5}, Landroid/hardware/camera2/CameraManager;->getCameraIdList()[Ljava/lang/String;
+ 
+     move-result-object v6
+@@ -1278,12 +2621,12 @@
+ 
+     aget-object v14, v6, v10
+ 
+-    .line 173
++    .line 302
+     invoke-virtual {v5, v14}, Landroid/hardware/camera2/CameraManager;->getCameraCharacteristics(Ljava/lang/String;)Landroid/hardware/camera2/CameraCharacteristics;
+ 
+     move-result-object v14
+ 
+-    .line 174
++    .line 303
+     sget-object v15, Landroid/hardware/camera2/CameraCharacteristics;->SENSOR_INFO_ACTIVE_ARRAY_SIZE:Landroid/hardware/camera2/CameraCharacteristics$Key;
+ 
+     invoke-virtual {v14, v15}, Landroid/hardware/camera2/CameraCharacteristics;->get(Landroid/hardware/camera2/CameraCharacteristics$Key;)Ljava/lang/Object;
+@@ -1292,7 +2635,7 @@
+ 
+     check-cast v15, Landroid/graphics/Rect;
+ 
+-    .line 175
++    .line 304
+     sget-object v3, Landroid/hardware/camera2/CameraCharacteristics;->SENSOR_ORIENTATION:Landroid/hardware/camera2/CameraCharacteristics$Key;
+ 
+     invoke-virtual {v14, v3}, Landroid/hardware/camera2/CameraCharacteristics;->get(Landroid/hardware/camera2/CameraCharacteristics$Key;)Ljava/lang/Object;
+@@ -1301,7 +2644,7 @@
+ 
+     check-cast v3, Ljava/lang/Integer;
+ 
+-    .line 176
++    .line 305
+     sget-object v4, Landroid/hardware/camera2/CameraCharacteristics;->LENS_FACING:Landroid/hardware/camera2/CameraCharacteristics$Key;
+ 
+     invoke-virtual {v14, v4}, Landroid/hardware/camera2/CameraCharacteristics;->get(Landroid/hardware/camera2/CameraCharacteristics$Key;)Ljava/lang/Object;
+@@ -1310,13 +2653,23 @@
+ 
+     check-cast v4, Ljava/lang/Integer;
+ 
++    .line 306
+     if-eqz v15, :cond_3
+ 
+     if-nez v3, :cond_1
+ 
++    .line 307
++    move-object/from16 p0, v5
++
++    move-object/from16 v16, v6
++
++    move/from16 v17, v12
++
++    move/from16 v18, v13
++
+     goto :goto_2
+ 
+-    .line 180
++    .line 309
+     :cond_1
+     invoke-virtual {v15}, Landroid/graphics/Rect;->width()I
+ 
+@@ -1352,20 +2705,24 @@
+ 
+     move-result-wide v5
+ 
++    .line 310
+     cmp-long v12, v5, v8
+ 
+     if-gez v12, :cond_4
+ 
+-    .line 183
++    .line 311
++    nop
++
++    .line 312
+     invoke-virtual {v3}, Ljava/lang/Integer;->intValue()I
+ 
+     move-result v12
+ 
++    .line 313
+     const/4 v11, 0x1
+ 
+     if-eqz v4, :cond_2
+ 
+-    .line 184
+     invoke-virtual {v4}, Ljava/lang/Integer;->intValue()I
+ 
+     move-result v3
+@@ -1379,13 +2736,14 @@
+     :cond_2
+     const/4 v13, 0x0
+ 
++    .line 314
+     :goto_1
+     move-wide v8, v5
+ 
+     goto :goto_3
+ 
++    .line 306
+     :cond_3
+-    :goto_2
+     move-object/from16 p0, v5
+ 
+     move-object/from16 v16, v6
+@@ -1394,7 +2752,9 @@
+ 
+     move/from16 v18, v13
+ 
++    .line 301
+     :cond_4
++    :goto_2
+     move/from16 v12, v17
+ 
+     move/from16 v13, v18
+@@ -1412,6 +2772,7 @@
+ 
+     goto :goto_0
+ 
++    .line 317
+     :cond_5
+     move/from16 v17, v12
+ 
+@@ -1419,7 +2780,7 @@
+ 
+     if-nez v11, :cond_6
+ 
+-    .line 189
++    .line 318
+     new-instance v3, Ljava/lang/StringBuilder;
+ 
+     invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
+@@ -1428,25 +2789,35 @@
+ 
+     invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
++    move-result-object v3
++
+     invoke-virtual {v3, v0}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+ 
+-    const-string v0, "x"
++    move-result-object v0
++
++    const-string v3, "x"
+ 
+-    invoke-virtual {v3, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    invoke-virtual {v0, v3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+ 
+-    invoke-virtual {v3, v1}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++    move-result-object v0
+ 
+-    const-string v0, ", defaulting to rear/90"
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+ 
+-    invoke-virtual {v3, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++    move-result-object v0
+ 
+-    invoke-virtual {v3}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++    const-string v1, ", defaulting to rear/90"
++
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+ 
+     move-result-object v0
+ 
+     invoke-static {v2, v0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
+ 
+-    .line 191
++    .line 320
+     :cond_6
+     new-instance v0, Llunaris/camerafix/RawJpegFix$CamInfo;
+ 
+@@ -1466,15 +2837,16 @@
+ 
+     return-object v0
+ 
++    .line 321
+     :catchall_0
+     move-exception v0
+ 
+-    .line 193
++    .line 322
+     const-string v1, "resolveCamInfo failed, defaulting to rear/90"
+ 
+     invoke-static {v2, v1, v0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
+ 
+-    .line 194
++    .line 323
+     new-instance v0, Llunaris/camerafix/RawJpegFix$CamInfo;
+ 
+     const/16 v1, 0x5a
+@@ -1489,13 +2861,18 @@
+ .method private static rotateNv21_90CW([BII)[B
+     .locals 8
+ 
++    .line 328
+     mul-int v0, p1, p2
+ 
+-    .line 200
++    .line 329
+     array-length v1, p0
+ 
+     new-array v1, v1, [B
+ 
++    .line 330
++    nop
++
++    .line 331
+     const/4 v2, 0x0
+ 
+     const/4 v3, 0x0
+@@ -1503,15 +2880,21 @@
+     :goto_0
+     if-ge v3, p2, :cond_1
+ 
++    .line 332
+     const/4 v4, 0x0
+ 
+     :goto_1
+     if-ge v4, p1, :cond_0
+ 
++    .line 333
+     add-int/lit8 v5, p2, -0x1
+ 
+     sub-int/2addr v5, v3
+ 
++    .line 334
++    nop
++
++    .line 335
+     mul-int v6, v4, p2
+ 
+     add-int/2addr v6, v5
+@@ -1520,41 +2903,52 @@
+ 
+     add-int/2addr v5, v4
+ 
+-    .line 206
+     aget-byte v5, p0, v5
+ 
+     aput-byte v5, v1, v6
+ 
++    .line 332
+     add-int/lit8 v4, v4, 0x1
+ 
+     goto :goto_1
+ 
++    .line 331
+     :cond_0
+     add-int/lit8 v3, v3, 0x1
+ 
+     goto :goto_0
+ 
+-    .line 209
++    .line 338
+     :cond_1
+     div-int/lit8 p1, p1, 0x2
+ 
+-    .line 210
++    .line 339
+     div-int/lit8 p2, p2, 0x2
+ 
++    .line 340
++    nop
++
++    .line 341
+     const/4 v3, 0x0
+ 
+     :goto_2
+     if-ge v3, p2, :cond_3
+ 
++    .line 342
+     const/4 v4, 0x0
+ 
+     :goto_3
+     if-ge v4, p1, :cond_2
+ 
++    .line 343
+     add-int/lit8 v5, p2, -0x1
+ 
+     sub-int/2addr v5, v3
+ 
++    .line 344
++    nop
++
++    .line 345
+     mul-int v6, v3, p1
+ 
+     add-int/2addr v6, v4
+@@ -1563,6 +2957,7 @@
+ 
+     add-int/2addr v6, v0
+ 
++    .line 346
+     mul-int v7, v4, p2
+ 
+     add-int/2addr v7, v5
+@@ -1571,29 +2966,32 @@
+ 
+     add-int/2addr v7, v0
+ 
+-    .line 218
++    .line 347
+     aget-byte v5, p0, v6
+ 
+     aput-byte v5, v1, v7
+ 
++    .line 348
+     add-int/lit8 v7, v7, 0x1
+ 
+     add-int/lit8 v6, v6, 0x1
+ 
+-    .line 219
+     aget-byte v5, p0, v6
+ 
+     aput-byte v5, v1, v7
+ 
++    .line 342
+     add-int/lit8 v4, v4, 0x1
+ 
+     goto :goto_3
+ 
++    .line 341
+     :cond_2
+     add-int/lit8 v3, v3, 0x1
+ 
+     goto :goto_2
+ 
++    .line 351
+     :cond_3
+     return-object v1
+ .end method
+@@ -1601,71 +2999,75 @@
+ .method private static yuv420ToNv21(Landroid/media/Image;)[B
+     .locals 18
+ 
+-    .line 321
++    .line 492
+     invoke-virtual/range {p0 .. p0}, Landroid/media/Image;->getWidth()I
+ 
+     move-result v0
+ 
+-    .line 322
++    .line 493
+     invoke-virtual/range {p0 .. p0}, Landroid/media/Image;->getHeight()I
+ 
+     move-result v1
+ 
+-    .line 323
++    .line 494
+     invoke-virtual/range {p0 .. p0}, Landroid/media/Image;->getPlanes()[Landroid/media/Image$Plane;
+ 
+     move-result-object v2
+ 
++    .line 496
+     const/4 v3, 0x0
+ 
+-    .line 325
+     aget-object v4, v2, v3
+ 
+     invoke-virtual {v4}, Landroid/media/Image$Plane;->getBuffer()Ljava/nio/ByteBuffer;
+ 
+     move-result-object v4
+ 
++    .line 497
+     const/4 v5, 0x1
+ 
+-    .line 326
+     aget-object v6, v2, v5
+ 
+     invoke-virtual {v6}, Landroid/media/Image$Plane;->getBuffer()Ljava/nio/ByteBuffer;
+ 
+     move-result-object v6
+ 
++    .line 498
+     const/4 v7, 0x2
+ 
+-    .line 327
+     aget-object v8, v2, v7
+ 
+     invoke-virtual {v8}, Landroid/media/Image$Plane;->getBuffer()Ljava/nio/ByteBuffer;
+ 
+     move-result-object v8
+ 
++    .line 500
+     mul-int v9, v0, v1
+ 
+     mul-int/lit8 v9, v9, 0x3
+ 
+-    .line 329
+     div-int/2addr v9, v7
+ 
+     new-array v9, v9, [B
+ 
+-    .line 331
++    .line 502
+     aget-object v10, v2, v3
+ 
+     invoke-virtual {v10}, Landroid/media/Image$Plane;->getRowStride()I
+ 
+     move-result v10
+ 
+-    .line 332
++    .line 503
+     aget-object v11, v2, v3
+ 
+     invoke-virtual {v11}, Landroid/media/Image$Plane;->getPixelStride()I
+ 
+     move-result v11
+ 
++    .line 504
++    nop
++
++    .line 505
+     const/4 v12, 0x0
+ 
+     const/4 v13, 0x0
+@@ -1673,43 +3075,48 @@
+     :goto_0
+     if-ge v12, v1, :cond_2
+ 
++    .line 506
+     mul-int v14, v12, v10
+ 
++    .line 507
+     if-ne v11, v5, :cond_0
+ 
+-    .line 337
++    .line 508
+     invoke-virtual {v4, v14}, Ljava/nio/ByteBuffer;->position(I)Ljava/nio/Buffer;
+ 
+     move-result-object v14
+ 
+     check-cast v14, Ljava/nio/ByteBuffer;
+ 
+-    .line 338
++    .line 509
+     invoke-virtual {v4, v9, v13, v0}, Ljava/nio/ByteBuffer;->get([BII)Ljava/nio/ByteBuffer;
+ 
++    .line 510
+     add-int/2addr v13, v0
+ 
+     goto :goto_2
+ 
++    .line 512
+     :cond_0
+     const/4 v15, 0x0
+ 
+     :goto_1
+     if-ge v15, v0, :cond_1
+ 
++    .line 513
+     add-int/lit8 v16, v13, 0x1
+ 
+     mul-int v17, v15, v11
+ 
+     add-int v3, v14, v17
+ 
+-    .line 342
+     invoke-virtual {v4, v3}, Ljava/nio/ByteBuffer;->get(I)B
+ 
+     move-result v3
+ 
+     aput-byte v3, v9, v13
+ 
++    .line 512
+     add-int/lit8 v15, v15, 0x1
+ 
+     move/from16 v13, v16
+@@ -1718,6 +3125,7 @@
+ 
+     goto :goto_1
+ 
++    .line 505
+     :cond_1
+     :goto_2
+     add-int/lit8 v12, v12, 0x1
+@@ -1726,7 +3134,7 @@
+ 
+     goto :goto_0
+ 
+-    .line 347
++    .line 518
+     :cond_2
+     aget-object v3, v2, v5
+ 
+@@ -1734,62 +3142,69 @@
+ 
+     move-result v3
+ 
+-    .line 348
++    .line 519
+     aget-object v2, v2, v5
+ 
+     invoke-virtual {v2}, Landroid/media/Image$Plane;->getPixelStride()I
+ 
+     move-result v2
+ 
+-    .line 349
++    .line 520
+     div-int/2addr v1, v7
+ 
+-    .line 350
++    .line 521
+     div-int/2addr v0, v7
+ 
++    .line 522
+     const/4 v4, 0x0
+ 
+     :goto_3
+     if-ge v4, v1, :cond_4
+ 
++    .line 523
+     mul-int v5, v4, v3
+ 
++    .line 524
+     const/4 v7, 0x0
+ 
+     :goto_4
+     if-ge v7, v0, :cond_3
+ 
++    .line 525
+     mul-int v10, v7, v2
+ 
+     add-int/2addr v10, v5
+ 
++    .line 526
+     add-int/lit8 v11, v13, 0x1
+ 
+-    .line 355
+     invoke-virtual {v6, v10}, Ljava/nio/ByteBuffer;->get(I)B
+ 
+     move-result v12
+ 
+     aput-byte v12, v9, v13
+ 
+-    add-int/lit8 v13, v13, 0x2
++    .line 527
++    add-int/lit8 v13, v11, 0x1
+ 
+-    .line 356
+     invoke-virtual {v8, v10}, Ljava/nio/ByteBuffer;->get(I)B
+ 
+     move-result v10
+ 
+     aput-byte v10, v9, v11
+ 
++    .line 524
+     add-int/lit8 v7, v7, 0x1
+ 
+     goto :goto_4
+ 
++    .line 522
+     :cond_3
+     add-int/lit8 v4, v4, 0x1
+ 
+     goto :goto_3
+ 
++    .line 531
+     :cond_4
+     return-object v9
+ .end method
+-- 
+2.43.0
+
