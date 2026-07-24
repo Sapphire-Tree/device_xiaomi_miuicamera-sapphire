@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
+LOCAL_PATH := device/xiaomi/miuicamera-sapphire
+
 # Inherit from the proprietary version
 $(call inherit-product, vendor/xiaomi/miuicamera-sapphire/miuicamera-sapphire-vendor.mk)
 
